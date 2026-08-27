@@ -122,6 +122,7 @@ interface DoiMetadata {
   containerTitle?: string;
   publisher?: string;
   abstract?: string;
+  keywords?: string[];
 }
 
 // 1. Extract DOI pattern from text
@@ -136,12 +137,22 @@ function extractDoiFromText(text: string): string | null {
   return null;
 }
 
-// 2. Fetch metadata from official DOI Crossref registry
+// 2. Fetch metadata & keywords from official DOI Crossref & OpenAlex registries
 async function fetchMetadataByDoi(doi: string): Promise<DoiMetadata | null> {
+  const cleanDoi = doi.trim();
+  let title: string | undefined;
+  let authors: string | undefined;
+  let year: string | undefined;
+  let url: string | undefined = `https://doi.org/${cleanDoi}`;
+  let containerTitle: string | undefined;
+  let publisher: string | undefined;
+  let abstract: string | undefined;
+  const keywordsList: string[] = [];
+
+  // Step A: Crossref API
   try {
-    const cleanDoi = doi.trim();
-    const url = `https://api.crossref.org/works/${encodeURIComponent(cleanDoi)}`;
-    const res = await fetch(url, {
+    const cfUrl = `https://api.crossref.org/works/${encodeURIComponent(cleanDoi)}`;
+    const res = await fetch(cfUrl, {
       signal: AbortSignal.timeout(4500),
       headers: {
         'User-Agent': 'ResearchArchiveApp/1.0 (mailto:lim03187@gmail.com)'
@@ -152,12 +163,11 @@ async function fetchMetadataByDoi(doi: string): Promise<DoiMetadata | null> {
       const data = await res.json();
       const item = data.message;
       if (item) {
-        const title = item.title?.[0] || '';
-        const authors = (item.author || []).map((a: any) => {
+        title = item.title?.[0] || undefined;
+        authors = (item.author || []).map((a: any) => {
           return [a.given, a.family].filter(Boolean).join(' ') || a.name || '';
-        }).filter(Boolean).join(', ');
+        }).filter(Boolean).join(', ') || undefined;
 
-        let year = '';
         if (item.issued?.['date-parts']?.[0]?.[0]) {
           year = String(item.issued['date-parts'][0][0]);
         } else if (item.created?.['date-parts']?.[0]?.[0]) {
@@ -168,23 +178,73 @@ async function fetchMetadataByDoi(doi: string): Promise<DoiMetadata | null> {
           year = String(item['published-online']['date-parts'][0][0]);
         }
 
-        const abstract = item.abstract ? item.abstract.replace(/<[^>]*>/g, '').trim() : '';
+        abstract = item.abstract ? item.abstract.replace(/<[^>]*>/g, '').trim() : undefined;
+        containerTitle = item['container-title']?.[0];
+        publisher = item.publisher;
+        if (item.URL) url = item.URL;
 
-        return {
-          doi: item.DOI || cleanDoi,
-          title: title || undefined,
-          authors: authors || undefined,
-          year: year || undefined,
-          url: item.URL || `https://doi.org/${cleanDoi}`,
-          containerTitle: item['container-title']?.[0],
-          publisher: item.publisher,
-          abstract
-        };
+        if (Array.isArray(item.subject)) {
+          for (const s of item.subject) {
+            if (s && typeof s === 'string' && !keywordsList.includes(s.trim())) {
+              keywordsList.push(s.trim());
+            }
+          }
+        }
       }
     }
   } catch (err) {
     console.warn("Crossref DOI fetch notice:", err);
   }
+
+  // Step B: OpenAlex API (fetches scholarly keywords and domain concepts)
+  try {
+    const oaUrl = `https://api.openalex.org/works/https://doi.org/${encodeURIComponent(cleanDoi)}`;
+    const oaRes = await fetch(oaUrl, {
+      signal: AbortSignal.timeout(4500),
+      headers: {
+        'User-Agent': 'ResearchArchiveApp/1.0 (mailto:lim03187@gmail.com)'
+      }
+    });
+
+    if (oaRes.ok) {
+      const oaData = await oaRes.json();
+      if (!title && oaData.title) title = oaData.title;
+      if (!year && oaData.publication_year) year = String(oaData.publication_year);
+
+      if (Array.isArray(oaData.keywords)) {
+        for (const k of oaData.keywords) {
+          if (k.display_name && !keywordsList.includes(k.display_name)) {
+            keywordsList.push(k.display_name);
+          }
+        }
+      }
+
+      if (Array.isArray(oaData.concepts)) {
+        for (const c of oaData.concepts) {
+          if (c.display_name && !keywordsList.includes(c.display_name)) {
+            keywordsList.push(c.display_name);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("OpenAlex DOI fetch notice:", err);
+  }
+
+  if (title || authors || abstract || keywordsList.length > 0) {
+    return {
+      doi: cleanDoi,
+      title,
+      authors,
+      year,
+      url,
+      containerTitle,
+      publisher,
+      abstract,
+      keywords: keywordsList.length > 0 ? keywordsList : undefined
+    };
+  }
+
   return null;
 }
 
@@ -205,6 +265,13 @@ async function searchCrossrefByTitle(candidateTitle: string): Promise<DoiMetadat
       const data = await res.json();
       const item = data.message?.items?.[0];
       if (item && item.title?.[0]) {
+        const foundDoi = item.DOI;
+        if (foundDoi) {
+          // Fetch complete metadata and keywords via fetchMetadataByDoi
+          const fullMeta = await fetchMetadataByDoi(foundDoi);
+          if (fullMeta) return fullMeta;
+        }
+
         const title = item.title[0];
         const authors = (item.author || []).map((a: any) => {
           return [a.given, a.family].filter(Boolean).join(' ') || a.name || '';
@@ -222,6 +289,7 @@ async function searchCrossrefByTitle(candidateTitle: string): Promise<DoiMetadat
         }
 
         const abstract = item.abstract ? item.abstract.replace(/<[^>]*>/g, '').trim() : '';
+        const keywordsList = Array.isArray(item.subject) ? item.subject.filter(Boolean) : [];
 
         return {
           doi: item.DOI,
@@ -231,7 +299,8 @@ async function searchCrossrefByTitle(candidateTitle: string): Promise<DoiMetadat
           url: item.URL || (item.DOI ? `https://doi.org/${item.DOI}` : undefined),
           containerTitle: item['container-title']?.[0],
           publisher: item.publisher,
-          abstract
+          abstract,
+          keywords: keywordsList.length > 0 ? keywordsList : undefined
         };
       }
     }
@@ -355,7 +424,7 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
         authors: initialClean.cleanAuthors,
         year: initialClean.cleanYear,
         summary: `[제목: ${initialClean.cleanTitle} | 저자: ${initialClean.cleanAuthors} | 발행: ${initialClean.cleanYear}년] ${firstParagraphSummary}`,
-        keywords: [isPatent ? "특허" : "학술논문", "연구자료", "문헌분석"],
+        keywords: doiMeta?.keywords && doiMeta.keywords.length > 0 ? doiMeta.keywords.slice(0, 6) : [isPatent ? "특허" : "학술논문", "연구자료", "문헌분석"],
         type: isPatent ? "patent" : "paper" as const,
         doi: doiMeta?.doi || extractedDoi || undefined,
         fileUrl: doiMeta?.url || "https://arxiv.org/",
@@ -366,17 +435,26 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
         try {
           const ai = new GoogleGenAI({ apiKey });
           const promptInstructions = `당신은 전 세계 학술 논문 및 특허 문헌 분석 최고 전문가입니다.
-주어진 파일(파일명: ${file.originalname})의 내용을 정밀 분석하여 학술 서지 정보(정확한 논문 Title, 전체 저자명 Writer/Authors, 출판 연도 Published Year)와 상세 요약을 반드시 아래 JSON 형식으로 추출하세요.
-파일명이나 본문에 축약어(예: lok1985 -> Canadian Journal of Chemistry 1985년 논문 'Particle size control in dispersion polymerization of polystyrene')가 있다면 실제 논문 정보로 정확하게 분석해 주세요.
+주어진 파일(파일명: ${file.originalname})의 내용을 정밀 분석하여 학술 서지 정보(정확한 논문 Title, 전체 저자명 Writer/Authors, 출판 연도 Published Year)와 상세 요약, 그리고 핵심 기술 키워드를 반드시 아래 JSON 형식으로 추출하세요.
+파일명이나 본문에 축약어(예: lok1985 -> Canadian Journal of Chemistry 1985년 논문 'Particle size control in dispersion polymerization of polystyrene')가 있다면 실제 논문 정보 및 DOI 공식 정보를 참고하여 정확하게 분석해 주세요.
+
+[DOI / 학술 데이터베이스 실시간 조회 결과]
+${doiMeta ? `- 공식 제목: ${doiMeta.title || "없음"}
+- 공식 저자: ${doiMeta.authors || "없음"}
+- 공식 연도: ${doiMeta.year || "없음"}
+- 공식 DOI: ${doiMeta.doi || "없음"}
+- 공식 저널/학술지: ${doiMeta.containerTitle || "없음"}
+- 공식 초록(Abstract): ${doiMeta.abstract || "본문 내용 참조"}
+- 공식 등재 키워드 및 도메인 개념: ${doiMeta.keywords ? doiMeta.keywords.join(', ') : "없음"}` : "직접 감지된 공식 DOI 없음 (본문 텍스트 분석)"}
 
 [필수 추출 규칙]
 1. title: 문서의 공식 논문 제목 또는 특허 명칭. (상단 머리말, %PDF 문구, 페이지 번호 등은 제외하고 실제 연구 제목만 추출)
 2. authors: 저자 전체 성명 목록 (쉼표로 구분, 예: "Kar P. Lok, Christopher K. Ober")
 3. year: 출판 또는 발행 연도 4자리 숫자 (예: "1985")
-4. summary: **[제목: {title} | 저자: {authors} | 발행연도: {year}년]** 서지 표기를 요약 첫 줄에 포함하고, 연구의 목적, 핵심 분석 내용, 도출된 결론을 2~4문장으로 명확하게 한국어로 작성
-5. keywords: 문서의 핵심 기술 키워드 3~5개 배열
+4. summary: **[제목: {title} | 저자: {authors} | 발행연도: {year}년]** 서지 표기를 요약 첫 줄에 포함하고, 연구의 목적, 핵심 분석 내용, 도출된 결론을 2~4문장으로 명확하고 전문적인 한국어로 작성
+5. keywords: 논문의 핵심 연구 도메인 및 기술 키워드 4~6개 배열 (DOI 공식 등재 키워드가 있다면 한국어 번역 또는 영문 전문용어와 함께 적극 반영, 예: ["분산 중합", "폴리스티렌", "입자 크기 제어", "고분자 합성", "계면활성제"])
 6. type: "${isPatent ? 'patent' : 'paper'}"
-7. doi: 본문에 기재된 DOI (예: 10.xxxx/...)가 있다면 추출 (없으면 null)
+7. doi: 본문에 기재되거나 식별된 DOI (예: 10.xxxx/...)가 있다면 추출 (없으면 null)
 8. journal: 학술지명 또는 출판기관 (예: "Canadian Journal of Chemistry" 등)
 
 반드시 마크다운 백틱 없이 순수 JSON 객체만 응답하세요:
@@ -385,7 +463,7 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
   "authors": "저자1, 저자2",
   "year": "1985",
   "summary": "[제목: ... | 저자: ... | 발행연도: 1985년] 핵심 요약 내용",
-  "keywords": ["키워드1", "키워드2"],
+  "keywords": ["핵심키워드1", "핵심키워드2", "핵심키워드3", "핵심키워드4"],
   "type": "paper",
   "doi": null,
   "journal": "학술지명"
@@ -437,12 +515,16 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
               finalSummary = `[제목: ${cleanTitle} | 저자: ${cleanAuthors} | 발행연도: ${cleanYear}년] ${finalSummary}`;
             }
 
+            const mergedKeywords = Array.isArray(parsed.keywords) && parsed.keywords.length > 0 
+              ? parsed.keywords 
+              : (doiMeta?.keywords && doiMeta.keywords.length > 0 ? doiMeta.keywords.slice(0, 6) : analysisResult.keywords);
+
             analysisResult = {
               title: cleanTitle,
               authors: cleanAuthors,
               year: cleanYear,
               summary: finalSummary,
-              keywords: Array.isArray(parsed.keywords) && parsed.keywords.length > 0 ? parsed.keywords : analysisResult.keywords,
+              keywords: mergedKeywords,
               type: parsed.type === 'patent' ? 'patent' : 'paper',
               doi: doiMeta?.doi || parsed.doi || analysisResult.doi,
               fileUrl: doiMeta?.url || analysisResult.fileUrl,
@@ -518,7 +600,7 @@ app.post("/api/analyze-document", async (req, res) => {
     authors: doiMeta?.authors || secondLineAuthors,
     year: doiMeta?.year || textYear,
     summary: firstParagraphSummary,
-    keywords: ["연구자료", "분석문서", fileType === 'patent' ? "특허" : "학술논문"],
+    keywords: doiMeta?.keywords && doiMeta.keywords.length > 0 ? doiMeta.keywords.slice(0, 6) : ["연구자료", "분석문서", fileType === 'patent' ? "특허" : "학술논문"],
     type: fileType || "paper",
     doi: doiMeta?.doi || extractedDoi || undefined,
     fileUrl: doiMeta?.url || "https://arxiv.org/",
@@ -534,24 +616,34 @@ app.post("/api/analyze-document", async (req, res) => {
     const ai = new GoogleGenAI({ apiKey });
     let response: any = null;
     const prompt = `당신은 전 세계 학술 논문 및 특허 문헌 분석 전문가입니다.
-다음 텍스트(논문 초록, 본문, 특허 설명)를 정밀 분석하여 JSON 형식으로 정확히 추출해주세요.
-- 규칙:
-  1. title: 문서의 정확한 논문 제목 또는 특허 명칭 (DOI 조회 정보 참고: "${doiMeta?.title || ''}")
-  2. authors: 저자 전체명 (쉼표로 구분, 예: "Kar P. Lok, Christopher K. Ober")
-  3. year: 출판/발행 연도 4자리 (예: "1985")
-  4. summary: 초록 또는 핵심 내용을 한국어로 2~3문장으로 간결하고 자연스럽게 요약
-  5. keywords: 키워드 3~5개 배열
-  6. type: "${fileType || 'paper'}"
-  7. doi: 발견된 DOI (없으면 null)
-  8. journal: 학술지명 또는 출판기관
+다음 텍스트(논문 초록, 본문, 특허 설명)와 공식 DOI 조회 정보를 정밀 분석하여 학술 서지 정보와 전문 기술 키워드를 JSON 형식으로 정확히 추출해주세요.
+
+[DOI / 학술 데이터베이스 실시간 조회 결과]
+${doiMeta ? `- 공식 제목: ${doiMeta.title || "없음"}
+- 공식 저자: ${doiMeta.authors || "없음"}
+- 공식 연도: ${doiMeta.year || "없음"}
+- 공식 DOI: ${doiMeta.doi || "없음"}
+- 공식 저널/학술지: ${doiMeta.containerTitle || "없음"}
+- 공식 초록(Abstract): ${doiMeta.abstract || "본문 참조"}
+- 공식 등재 키워드 및 도메인 개념: ${doiMeta.keywords ? doiMeta.keywords.join(', ') : "없음"}` : "직접 감지된 공식 DOI 없음"}
+
+[필수 추출 규칙]
+1. title: 문서의 정확한 논문 제목 또는 특허 명칭
+2. authors: 저자 전체 성명 (쉼표로 구분, 예: "Kar P. Lok, Christopher K. Ober")
+3. year: 출판/발행 연도 4자리 (예: "1985")
+4. summary: **[제목: {title} | 저자: {authors} | 발행연도: {year}년]** 서지를 포함하여 핵심 내용을 한국어로 2~3문장으로 간결하고 전문적으로 요약
+5. keywords: 논문/특허의 핵심 연구 도메인 및 기술 키워드 4~6개 배열 (DOI 공식 등재 키워드가 있다면 한국어 번역 또는 영문 전문용어와 함께 적극 반영, 예: ["분산 중합", "폴리스티렌", "입자 크기 제어", "고분자 합성"])
+6. type: "${fileType || 'paper'}"
+7. doi: 발견된 DOI (없으면 null)
+8. journal: 학술지명 또는 출판기관
 
 반드시 마크다운 백틱 없이 순수 JSON 포맷으로만 응답하세요:
 {
   "title": "문서 제목",
   "authors": "저자 이름들 (쉼표로 구분)",
   "year": "발행 연도 (예: 1985)",
-  "summary": "핵심 내용 요약 (한국어)",
-  "keywords": ["키워드1", "키워드2"],
+  "summary": "[제목: ... | 저자: ... | 발행연도: 1985년] 핵심 요약 내용",
+  "keywords": ["핵심키워드1", "핵심키워드2", "핵심키워드3", "핵심키워드4"],
   "type": "${fileType || 'paper'}",
   "doi": null,
   "journal": "학술지명"
@@ -593,6 +685,10 @@ ${rawText.slice(0, 5000)}`;
         finalSummary = `[저자: ${cleanAuthors} (${cleanYear})] ${finalSummary}`;
       }
 
+      const mergedKeywords = Array.isArray(parsed.keywords) && parsed.keywords.length > 0
+        ? parsed.keywords
+        : (doiMeta?.keywords && doiMeta.keywords.length > 0 ? doiMeta.keywords.slice(0, 6) : fallbackResult.keywords);
+
       return res.json({
         ...fallbackResult,
         ...parsed,
@@ -600,6 +696,7 @@ ${rawText.slice(0, 5000)}`;
         authors: cleanAuthors,
         year: cleanYear,
         summary: finalSummary,
+        keywords: mergedKeywords,
         doi: doiMeta?.doi || parsed.doi || fallbackResult.doi,
         fileUrl: doiMeta?.url || parsed.fileUrl || fallbackResult.fileUrl,
         journal: doiMeta?.containerTitle || parsed.journal || fallbackResult.journal
@@ -665,14 +762,21 @@ app.post("/api/reanalyze-document", async (req, res) => {
 - 기존 연도: ${year || "미상"}
 - 기존 요약: ${summary || ""}
 - 유형: ${type || "paper"}
-${doiMeta ? `- Crossref 공식 학술 DB 검색 결과:\n  * 제목: ${doiMeta.title}\n  * 저자: ${doiMeta.authors}\n  * 연도: ${doiMeta.year}\n  * 저널: ${doiMeta.containerTitle || ""}\n  * DOI: ${doiMeta.doi || ""}` : ""}
+${doiMeta ? `- Crossref & OpenAlex 공식 학술 DB 실시간 조회 결과:
+  * 공식 논문 제목: ${doiMeta.title || "없음"}
+  * 공식 저자: ${doiMeta.authors || "없음"}
+  * 출판 연도: ${doiMeta.year || "없음"}
+  * 학술지/저널: ${doiMeta.containerTitle || "없음"}
+  * 공식 DOI: ${doiMeta.doi || "없음"}
+  * 공식 논문 초록(Abstract): ${doiMeta.abstract || "본문 참조"}
+  * 공식 등재 기술 키워드 및 도메인 개념: ${doiMeta.keywords ? doiMeta.keywords.join(', ') : "없음"}` : ""}
 
 [필수 추출 규칙]
 1. title: 공식 학술 논문 제목 또는 특허 명칭 (절대 '%PDF'나 파일명 확장자 등을 포함하지 말 것)
 2. authors: 저자 전체 성명 목록 (쉼표 구분, 예: "Kar P. Lok, Christopher K. Ober")
 3. year: 출판 또는 발행 연도 4자리 (예: "1985")
 4. summary: **[제목: {title} | 저자: {authors} | 발행연도: {year}년]** 서지 정보를 최상단에 반드시 포함하고, 연구의 목적, 주요 방법론, 핵심 결론을 2~4문장의 명확하고 전문적인 한국어로 작성
-5. keywords: 해당 문서의 핵심 기술 및 도메인을 대표하는 고품질 전문 키워드 4~6개 배열 (예: ["분산 중합", "폴리스티렌", "입자 크기 제어", "고분자 화학", "계면활성제"])
+5. keywords: 해당 논문의 핵심 연구 도메인과 기술 키워드 4~6개 배열 (DOI 공식 등재 키워드가 있다면 한국어 번역 또는 영문 전문용어와 함께 적극 반영, 예: ["분산 중합", "폴리스티렌", "입자 크기 제어", "고분자 화학", "계면활성제"])
 6. type: "${type || 'paper'}"
 7. doi: DOI가 있다면 기재 (예: "10.1139/v85-033" 등, 없으면 null)
 8. journal: 학술지명 또는 출판기관 (예: "Canadian Journal of Chemistry" 등)
@@ -728,13 +832,17 @@ ${doiMeta ? `- Crossref 공식 학술 DB 검색 결과:\n  * 제목: ${doiMeta.t
           finalSummary = `[제목: ${cleanTitle} | 저자: ${cleanAuthors} | 발행연도: ${cleanYear}년] ${finalSummary}`;
         }
 
+        const mergedKeywords = Array.isArray(parsed.keywords) && parsed.keywords.length > 0
+          ? parsed.keywords
+          : (doiMeta?.keywords && doiMeta.keywords.length > 0 ? doiMeta.keywords.slice(0, 6) : ["학술연구", "문헌분석"]);
+
         return res.json({
           id: id,
           title: cleanTitle,
           authors: cleanAuthors,
           year: cleanYear,
           summary: finalSummary,
-          keywords: Array.isArray(parsed.keywords) && parsed.keywords.length > 0 ? parsed.keywords : ["학술연구", "문헌분석"],
+          keywords: mergedKeywords,
           type: parsed.type === "patent" ? "patent" : "paper",
           doi: doiMeta?.doi || parsed.doi || undefined,
           fileUrl: doiMeta?.url || (doiMeta?.doi ? `https://doi.org/${doiMeta.doi}` : undefined) || (parsed.doi ? `https://doi.org/${parsed.doi}` : undefined),
@@ -758,7 +866,7 @@ ${doiMeta ? `- Crossref 공식 학술 DB 검색 결과:\n  * 제목: ${doiMeta.t
       authors: cleanAuthors,
       year: cleanYear,
       summary: `[제목: ${cleanTitle} | 저자: ${cleanAuthors} | 발행연도: ${cleanYear}년] ` + (summary || "문서 분석 완료"),
-      keywords: ["연구자료", "학술문헌"],
+      keywords: doiMeta?.keywords && doiMeta.keywords.length > 0 ? doiMeta.keywords.slice(0, 6) : ["연구자료", "학술문헌"],
       type: type || "paper",
       doi: doiMeta?.doi,
       fileUrl: doiMeta?.url,
