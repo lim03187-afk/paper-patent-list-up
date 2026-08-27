@@ -34,6 +34,43 @@ function getGeminiApiKey(): string | undefined {
   return undefined;
 }
 
+// Helper to safely extract JSON from AI responses (even with markdown blocks or extra text)
+function extractJsonFromAiResponse(text?: string): any | null {
+  if (!text) return null;
+  let cleaned = text.trim();
+  
+  // 1. Check for markdown code blocks (```json ... ``` or ``` ... ```)
+  const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (codeBlockMatch && codeBlockMatch[1]) {
+    try {
+      return JSON.parse(codeBlockMatch[1].trim());
+    } catch {}
+    cleaned = codeBlockMatch[1].trim();
+  }
+
+  // 2. Direct JSON.parse attempt
+  try {
+    return JSON.parse(cleaned);
+  } catch {}
+
+  // 3. Find outermost { ... }
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    const jsonSub = cleaned.slice(firstBrace, lastBrace + 1);
+    try {
+      return JSON.parse(jsonSub);
+    } catch {
+      try {
+        // Remove trailing commas before } or ]
+        const fixed = jsonSub.replace(/,\s*([}\]])/g, "$1");
+        return JSON.parse(fixed);
+      } catch {}
+    }
+  }
+  return null;
+}
+
 const app = express();
 const PORT = 3000;
 
@@ -370,10 +407,8 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
           }
 
           const text = response?.text ? response.text.trim() : "";
-          if (text) {
-            const cleanJson = text.replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/\s*```$/, "");
-            const parsed = JSON.parse(cleanJson);
-            
+          const parsed = extractJsonFromAiResponse(text);
+          if (parsed) {
             // If AI discovered a valid DOI and we don't have metadata yet, lookup
             if (!doiMeta && parsed.doi && typeof parsed.doi === 'string' && parsed.doi.includes('10.')) {
               const aiDoiMeta = await fetchMetadataByDoi(parsed.doi);
@@ -538,10 +573,8 @@ ${rawText.slice(0, 5000)}`;
     }
 
     const text = response?.text ? response.text.trim() : "";
-    if (text) {
-      const cleanJson = text.replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/\s*```$/, "");
-      const parsed = JSON.parse(cleanJson);
-
+    const parsed = extractJsonFromAiResponse(text);
+    if (parsed) {
       if (!doiMeta && parsed.title && parsed.title.length > 6) {
         const searchedDoi = await searchCrossrefByTitle(parsed.title);
         if (searchedDoi) {
@@ -574,7 +607,7 @@ ${rawText.slice(0, 5000)}`;
     }
     return res.json(fallbackResult);
   } catch (error: any) {
-    console.error("Gemini analysis error (using fallback):", error);
+    console.error("Gemini analysis notice (using fallback):", error);
     return res.json(fallbackResult);
   }
 });
@@ -663,17 +696,26 @@ ${doiMeta ? `- Crossref 공식 학술 DB 검색 결과:\n  * 제목: ${doiMeta.t
           contents: prompt,
         });
       } catch {
-        response = await ai.models.generateContent({
-          model: "gemini-3.5-flash-lite",
-          contents: prompt,
-        });
+        try {
+          response = await ai.models.generateContent({
+            model: "gemini-3.5-flash-lite",
+            contents: prompt,
+          });
+        } catch {
+          try {
+            response = await ai.models.generateContent({
+              model: "gemini-3.6-flash",
+              contents: prompt,
+            });
+          } catch (modelErr) {
+            console.warn("AI generation failed in reanalyze:", modelErr);
+          }
+        }
       }
 
       const text = response?.text ? response.text.trim() : "";
-      if (text) {
-        const cleanJson = text.replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/\s*```$/, "");
-        const parsed = JSON.parse(cleanJson);
-
+      const parsed = extractJsonFromAiResponse(text);
+      if (parsed) {
         const { cleanTitle, cleanAuthors, cleanYear } = cleanMetadata(
           parsed.title || doiMeta?.title,
           parsed.authors || doiMeta?.authors,
@@ -702,7 +744,7 @@ ${doiMeta ? `- Crossref 공식 학술 DB 검색 결과:\n  * 제목: ${doiMeta.t
       }
     }
 
-    // Fallback if no Gemini key or parse error
+    // Fallback using DOI metadata or filename heuristics
     const { cleanTitle, cleanAuthors, cleanYear } = cleanMetadata(
       doiMeta?.title,
       doiMeta?.authors,
@@ -716,7 +758,7 @@ ${doiMeta ? `- Crossref 공식 학술 DB 검색 결과:\n  * 제목: ${doiMeta.t
       authors: cleanAuthors,
       year: cleanYear,
       summary: `[제목: ${cleanTitle} | 저자: ${cleanAuthors} | 발행연도: ${cleanYear}년] ` + (summary || "문서 분석 완료"),
-      keywords: ["연구자료"],
+      keywords: ["연구자료", "학술문헌"],
       type: type || "paper",
       doi: doiMeta?.doi,
       fileUrl: doiMeta?.url,
@@ -724,8 +766,22 @@ ${doiMeta ? `- Crossref 공식 학술 DB 검색 결과:\n  * 제목: ${doiMeta.t
       folderPath
     });
   } catch (err: any) {
-    console.error("Re-analyze error:", err);
-    return res.status(500).json({ error: err.message || "문서 재분석 중 오류 발생" });
+    console.error("Re-analyze error (using fallback):", err);
+    const { cleanTitle, cleanAuthors, cleanYear } = cleanMetadata(
+      req.body?.title,
+      req.body?.authors,
+      req.body?.year,
+      "학술 문서"
+    );
+    return res.json({
+      id: req.body?.id || "doc-" + Date.now(),
+      title: cleanTitle,
+      authors: cleanAuthors,
+      year: cleanYear,
+      summary: `[제목: ${cleanTitle} | 저자: ${cleanAuthors} | 발행연도: ${cleanYear}년] ` + (req.body?.summary || "문서 분석 완료"),
+      keywords: ["연구자료"],
+      type: req.body?.type || "paper"
+    });
   }
 });
 

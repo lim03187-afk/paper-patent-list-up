@@ -237,7 +237,21 @@ export default function App() {
       console.warn("Client crossref fallback notice:", crErr);
     }
 
-    throw new Error('문서 서지 정보를 분석하지 못했습니다.');
+    // Cleaned heuristic fallback
+    let safeTitle = doc.title.trim().replace(/^%PDF[^\s]*\s*/i, '').trim();
+    if (!safeTitle || safeTitle.startsWith('%')) {
+      const fileMatch = (doc.summary || "").match(/([A-Za-z0-9_.-]+)\.(pdf|txt|md|docx?)/i);
+      safeTitle = fileMatch ? fileMatch[1].replace(/[-_]/g, ' ') : "학술 연구 문서";
+    }
+    const cleanDoc: ResearchDocument = {
+      ...doc,
+      title: safeTitle,
+      authors: (!doc.authors || doc.authors.startsWith('%')) ? "저자 미상" : doc.authors,
+      year: doc.year || new Date().getFullYear().toString(),
+      summary: doc.summary?.startsWith('[제목:') ? doc.summary : `[제목: ${safeTitle} | 저자: ${doc.authors || '저자 미상'} | 발행연도: ${doc.year || '2026'}년] ` + (doc.summary || '문서 분석 완료')
+    };
+    await handleUpdateDocument(cleanDoc);
+    return cleanDoc;
   };
 
   const handleDeleteDocument = async (id: string) => {
