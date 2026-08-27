@@ -73,7 +73,7 @@ ${extractedText.slice(0, 4000)}`;
 
           const response = await Promise.race([
             ai.models.generateContent({
-              model: "gemini-2.5-flash",
+              model: "gemini-3.7-flash",
               contents: prompt,
             }),
             timeoutPromise
@@ -136,7 +136,7 @@ app.post("/api/analyze-document", async (req, res) => {
 
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3.7-flash",
       contents: `다음 텍스트(논문 초록, 특허 요약 또는 설명)를 분석하여 JSON 형식으로 정확히 추출해주세요.
 반드시 아래 JSON 포맷으로만 응답하세요 (마크다운 백틱 제외):
 {
