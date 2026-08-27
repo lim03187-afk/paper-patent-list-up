@@ -123,11 +123,16 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
           if (!proceed) return;
         }
 
+        const authorsString = Array.isArray(parsedDoc.authors)
+          ? parsedDoc.authors.join(', ')
+          : (typeof parsedDoc.authors === 'string' && parsedDoc.authors.trim() ? parsedDoc.authors.trim() : '저자 미상');
+        const yearString = String(parsedDoc.year || new Date().getFullYear()).replace(/\D/g, '') || String(new Date().getFullYear());
+
         const newDoc: ResearchDocument = {
           id: 'doc-' + Date.now() + '-' + idx,
           title: docTitle,
-          authors: parsedDoc.authors || '저자 미상',
-          year: parsedDoc.year || '2026',
+          authors: authorsString,
+          year: yearString,
           summary: parsedDoc.summary || '내용 요약 없음',
           keywords: Array.isArray(parsedDoc.keywords) ? parsedDoc.keywords : ['연구자료'],
           type: parsedDoc.type === 'patent' ? 'patent' : 'paper',
@@ -184,11 +189,16 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
         }
       }
 
+      const authorsString = Array.isArray(data.authors)
+        ? data.authors.join(', ')
+        : (typeof data.authors === 'string' && data.authors.trim() ? data.authors.trim() : '저자 미상');
+      const yearString = String(data.year || new Date().getFullYear()).replace(/\D/g, '') || String(new Date().getFullYear());
+
       const newDoc: ResearchDocument = {
         id: 'doc-' + Date.now(),
         title: docTitle,
-        authors: data.authors || '저자 미상',
-        year: data.year || '2026',
+        authors: authorsString,
+        year: yearString,
         summary: data.summary || rawText.slice(0, 200),
         keywords: Array.isArray(data.keywords) ? data.keywords : ['연구', '신규문서'],
         type: data.type === 'patent' ? 'patent' : 'paper',
