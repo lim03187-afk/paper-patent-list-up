@@ -124,6 +124,26 @@ export default function App() {
   const [selectedYear, setSelectedYear] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'card' | 'table'>('card');
 
+  // Gemini AI model selection state
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    return localStorage.getItem('gemini_selected_model') || 'gemini-3.7-flash';
+  });
+  const [customModelName, setCustomModelName] = useState<string>(() => {
+    return localStorage.getItem('gemini_custom_model_name') || '';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('gemini_selected_model', selectedModel);
+  }, [selectedModel]);
+
+  useEffect(() => {
+    localStorage.setItem('gemini_custom_model_name', customModelName);
+  }, [customModelName]);
+
+  const effectiveModel = selectedModel === 'custom'
+    ? (customModelName.trim() || 'gemini-3.7-flash')
+    : selectedModel;
+
   // Modals state
   const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -183,12 +203,13 @@ export default function App() {
     }
   };
 
-  const handleReanalyzeDocument = async (doc: ResearchDocument) => {
+  const handleReanalyzeDocument = async (doc: ResearchDocument, targetModel?: string) => {
+    const modelToUse = targetModel || effectiveModel;
     try {
       const res = await fetch('/api/reanalyze-document', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(doc)
+        body: JSON.stringify({ ...doc, model: modelToUse })
       });
       if (res.ok) {
         const updated = await res.json();
@@ -321,6 +342,10 @@ export default function App() {
         totalCount={totalCount}
         user={user}
         onLogout={handleLogout}
+        selectedModel={selectedModel}
+        setSelectedModel={setSelectedModel}
+        customModelName={customModelName}
+        setCustomModelName={setCustomModelName}
       />
 
       {/* Main Container with Sidebar */}
@@ -460,6 +485,11 @@ export default function App() {
               onSelectDocument={(doc) => setSelectedDocForDetail(doc)}
               onUpdateDocument={handleUpdateDocument}
               onReanalyzeDocument={handleReanalyzeDocument}
+              selectedModel={selectedModel}
+              setSelectedModel={setSelectedModel}
+              customModelName={customModelName}
+              setCustomModelName={setCustomModelName}
+              effectiveModel={effectiveModel}
             />
           </div>
         </section>
@@ -468,7 +498,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="h-8 bg-white border-t border-slate-200 px-6 flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-tighter shrink-0">
-        <div>System Status: Ready • Supabase Auth Active ({user.email})</div>
+        <div>System Status: Ready • Supabase Auth Active ({user.email}) • Active Model: {effectiveModel}</div>
         <div>Layout: High Density View • Single Iframe Mode</div>
       </footer>
 
@@ -488,6 +518,11 @@ export default function App() {
         onAddDocument={handleAddDocument}
         currentFolderPath={folder.path}
         existingDocuments={documents}
+        selectedModel={selectedModel}
+        setSelectedModel={setSelectedModel}
+        customModelName={customModelName}
+        setCustomModelName={setCustomModelName}
+        effectiveModel={effectiveModel}
       />
 
       <DocumentDetailModal
@@ -495,6 +530,11 @@ export default function App() {
         onClose={() => setSelectedDocForDetail(null)}
         onUpdateDocument={handleUpdateDocument}
         onReanalyzeDocument={handleReanalyzeDocument}
+        selectedModel={selectedModel}
+        setSelectedModel={setSelectedModel}
+        customModelName={customModelName}
+        setCustomModelName={setCustomModelName}
+        effectiveModel={effectiveModel}
       />
 
     </div>

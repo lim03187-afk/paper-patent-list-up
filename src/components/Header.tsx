@@ -1,6 +1,7 @@
 import React from 'react';
 import { FolderOpen, Plus, Search, BookOpen, LogOut, User as UserIcon } from 'lucide-react';
 import { FolderConfig } from '../types';
+import { AiModelSelector } from './AiModelSelector';
 
 interface HeaderProps {
   folder: FolderConfig;
@@ -11,6 +12,10 @@ interface HeaderProps {
   totalCount: number;
   user?: any;
   onLogout?: () => void;
+  selectedModel: string;
+  setSelectedModel: (modelId: string) => void;
+  customModelName: string;
+  setCustomModelName: (name: string) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -21,10 +26,14 @@ export const Header: React.FC<HeaderProps> = ({
   setSearchQuery,
   totalCount,
   user,
-  onLogout
+  onLogout,
+  selectedModel,
+  setSelectedModel,
+  customModelName,
+  setCustomModelName
 }) => {
   return (
-    <header className="h-16 px-6 bg-white border-b border-slate-200 flex items-center justify-between shadow-xs shrink-0 z-30">
+    <header className="h-16 px-6 bg-white border-b border-slate-200 flex items-center justify-between shadow-xs shrink-0 z-30 gap-3">
       <div className="flex items-center gap-3">
         <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center text-white shadow-2xs">
           <BookOpen className="w-5 h-5" />
@@ -35,7 +44,7 @@ export const Header: React.FC<HeaderProps> = ({
         </h1>
       </div>
 
-      <div className="flex items-center gap-4 flex-1 max-w-xl mx-8">
+      <div className="flex items-center gap-4 flex-1 max-w-lg mx-4">
         <div className="relative w-full">
           <span className="absolute inset-y-0 left-3 flex items-center text-slate-400 pointer-events-none">
             <Search className="w-4 h-4" />
@@ -50,28 +59,36 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2.5">
+        {/* Gemini AI Model Selector */}
+        <AiModelSelector
+          selectedModel={selectedModel}
+          setSelectedModel={setSelectedModel}
+          customModelName={customModelName}
+          setCustomModelName={setCustomModelName}
+        />
+
         <button
           onClick={onOpenFolderModal}
-          className="px-3.5 py-2 bg-blue-50 text-blue-600 rounded-full text-xs font-medium hover:bg-blue-100 transition-colors flex items-center gap-1.5 shadow-2xs"
+          className="px-3.5 py-1.5 bg-blue-50 text-blue-600 rounded-full text-xs font-medium hover:bg-blue-100 transition-colors flex items-center gap-1.5 shadow-2xs"
           title="폴더 지정 및 관리"
         >
           <FolderOpen className="w-4 h-4" />
-          <span className="hidden sm:inline truncate max-w-[140px]">{folder.name}</span>
+          <span className="hidden sm:inline truncate max-w-[120px]">{folder.name}</span>
         </button>
         <button
           onClick={onOpenAddModal}
-          className="px-4 py-2 bg-blue-600 text-white rounded-full text-xs font-medium hover:bg-blue-700 transition-colors flex items-center gap-1.5 shadow-xs"
+          className="px-3.5 py-1.5 bg-blue-600 text-white rounded-full text-xs font-medium hover:bg-blue-700 transition-colors flex items-center gap-1.5 shadow-xs"
         >
           <Plus className="w-4 h-4" />
-          <span>문서 추가 / AI 분석</span>
+          <span>문서 추가</span>
         </button>
 
         {user && (
-          <div className="flex items-center gap-2 ml-2 pl-2 border-l border-slate-200">
+          <div className="flex items-center gap-2 ml-1 pl-2 border-l border-slate-200">
             <div className="hidden md:flex items-center gap-1.5 text-xs text-slate-600 bg-slate-100 px-3 py-1.5 rounded-full">
               <UserIcon className="w-3.5 h-3.5 text-indigo-600" />
-              <span className="truncate max-w-[120px] font-medium">{user.email}</span>
+              <span className="truncate max-w-[100px] font-medium">{user.email}</span>
             </div>
             {onLogout && (
               <button

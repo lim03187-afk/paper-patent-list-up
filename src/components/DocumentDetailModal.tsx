@@ -1,19 +1,30 @@
 import React, { useState } from 'react';
 import { X, FileText, Shield, Calendar, Users, Tag, ExternalLink, HardDrive, Copy, Check, Globe, BookOpen, Sparkles, Loader2, Edit3, Save } from 'lucide-react';
 import { ResearchDocument } from '../types';
+import { AiModelSelector } from './AiModelSelector';
 
 interface DocumentDetailModalProps {
   document: ResearchDocument | null;
   onClose: () => void;
   onUpdateDocument?: (doc: ResearchDocument) => void;
-  onReanalyzeDocument?: (doc: ResearchDocument) => Promise<any>;
+  onReanalyzeDocument?: (doc: ResearchDocument, model?: string) => Promise<any>;
+  selectedModel?: string;
+  setSelectedModel?: (modelId: string) => void;
+  customModelName?: string;
+  setCustomModelName?: (name: string) => void;
+  effectiveModel?: string;
 }
 
 export const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
   document,
   onClose,
   onUpdateDocument,
-  onReanalyzeDocument
+  onReanalyzeDocument,
+  selectedModel = 'gemini-3.7-flash',
+  setSelectedModel = () => {},
+  customModelName = '',
+  setCustomModelName = () => {},
+  effectiveModel = 'gemini-3.7-flash'
 }) => {
   const [copied, setCopied] = useState(false);
   const [isReanalyzing, setIsReanalyzing] = useState(false);
@@ -53,7 +64,7 @@ export const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
     if (!onReanalyzeDocument) return;
     setIsReanalyzing(true);
     try {
-      const updated = await onReanalyzeDocument(document);
+      const updated = await onReanalyzeDocument(document, effectiveModel);
       if (updated) {
         setEditTitle(updated.title);
         setEditAuthors(updated.authors);
@@ -125,9 +136,16 @@ export const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
         {/* Body content */}
         <div className="p-6 overflow-y-auto space-y-5">
           {/* Action Bar for AI Re-analysis & Edit */}
-          <div className="flex items-center justify-between bg-indigo-50/50 border border-indigo-100/80 rounded-xl p-3">
-            <div className="text-xs text-indigo-900 font-medium">
-              서지 정보(제목, 저자, 연도, 요약) AI 정밀 분석 및 수정
+          <div className="flex items-center justify-between bg-indigo-50/50 border border-indigo-100/80 rounded-xl p-3 flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-indigo-900 font-medium">AI 서지 분석 모델:</span>
+              <AiModelSelector
+                selectedModel={selectedModel}
+                setSelectedModel={setSelectedModel}
+                customModelName={customModelName}
+                setCustomModelName={setCustomModelName}
+                compact={true}
+              />
             </div>
             <div className="flex items-center space-x-2">
               {onReanalyzeDocument && (

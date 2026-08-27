@@ -125,6 +125,19 @@ interface DoiMetadata {
   keywords?: string[];
 }
 
+// Resolve user-selected or custom typed Gemini model name with standard fallbacks
+function resolveGeminiModel(requestedModel?: string): string {
+  if (requestedModel && typeof requestedModel === 'string' && requestedModel.trim().length > 0) {
+    const trimmed = requestedModel.trim();
+    // Normalize aliases if provided
+    if (trimmed === 'flash' || trimmed === 'gemini flash') return 'gemini-3.7-flash';
+    if (trimmed === 'pro' || trimmed === 'gemini pro') return 'gemini-3.1-pro-preview';
+    if (trimmed === 'lite' || trimmed === 'flash-lite' || trimmed === 'gemini lite') return 'gemini-3.1-flash-lite';
+    return trimmed;
+  }
+  return 'gemini-3.7-flash';
+}
+
 // 1. Extract DOI pattern from text
 function extractDoiFromText(text: string): string | null {
   // Regex to match standard DOI format (10.xxxx/...)
@@ -370,6 +383,9 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
       return res.status(400).json({ error: "업로드된 파일이 없습니다." });
     }
 
+    const requestedModel = req.body?.model;
+    const targetModel = resolveGeminiModel(requestedModel);
+
     const apiKey = getGeminiApiKey();
     const results = [];
 
@@ -474,14 +490,22 @@ ${doiMeta ? `- 공식 제목: ${doiMeta.title || "없음"}
           let response: any = null;
           try {
             response = await ai.models.generateContent({
-              model: "gemini-3.1-flash-lite",
+              model: targetModel,
               contents: contentText,
             });
-          } catch {
-            response = await ai.models.generateContent({
-              model: "gemini-3.5-flash-lite",
-              contents: contentText,
-            });
+          } catch (modelErr) {
+            console.warn(`Direct model call to ${targetModel} failed, trying fallback:`, modelErr);
+            try {
+              response = await ai.models.generateContent({
+                model: "gemini-3.7-flash",
+                contents: contentText,
+              });
+            } catch {
+              response = await ai.models.generateContent({
+                model: "gemini-3.1-flash-lite",
+                contents: contentText,
+              });
+            }
           }
 
           const text = response?.text ? response.text.trim() : "";
@@ -549,11 +573,12 @@ ${doiMeta ? `- 공식 제목: ${doiMeta.title || "없음"}
         authors: cleanAuthors,
         year: cleanYear,
         originalFilename: file.originalname,
-        size: file.size
+        size: file.size,
+        usedModel: targetModel
       });
     }
 
-    return res.json({ documents: results });
+    return res.json({ documents: results, usedModel: targetModel });
   } catch (error: any) {
     console.error("File upload and analysis error:", error);
     return res.status(500).json({ error: error.message || "파일 업로드 및 분석 중 오류가 발생했습니다." });
@@ -568,10 +593,12 @@ app.post("/upload-and-analyze", upload.array("files"), (req, res, next) => {
 
 // API endpoint to analyze paper/patent text using Gemini AI & DOI Lookup
 app.post("/api/analyze-document", async (req, res) => {
-  const { rawText, fileType } = req.body;
+  const { rawText, fileType, model } = req.body;
   if (!rawText) {
     return res.status(400).json({ error: "rawText is required" });
   }
+
+  const targetModel = resolveGeminiModel(model);
 
   const lines = rawText
     .split('\n')
@@ -604,7 +631,8 @@ app.post("/api/analyze-document", async (req, res) => {
     type: fileType || "paper",
     doi: doiMeta?.doi || extractedDoi || undefined,
     fileUrl: doiMeta?.url || "https://arxiv.org/",
-    journal: doiMeta?.containerTitle
+    journal: doiMeta?.containerTitle,
+    usedModel: targetModel
   };
 
   try {
@@ -654,14 +682,22 @@ ${rawText.slice(0, 5000)}`;
 
     try {
       response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-lite",
+        model: targetModel,
         contents: prompt,
       });
-    } catch {
-      response = await ai.models.generateContent({
-        model: "gemini-3.5-flash-lite",
-        contents: prompt,
-      });
+    } catch (modelErr) {
+      console.warn(`Direct model call to ${targetModel} failed, trying fallback:`, modelErr);
+      try {
+        response = await ai.models.generateContent({
+          model: "gemini-3.7-flash",
+          contents: prompt,
+        });
+      } catch {
+        response = await ai.models.generateContent({
+          model: "gemini-3.1-flash-lite",
+          contents: prompt,
+        });
+      }
     }
 
     const text = response?.text ? response.text.trim() : "";
@@ -699,7 +735,8 @@ ${rawText.slice(0, 5000)}`;
         keywords: mergedKeywords,
         doi: doiMeta?.doi || parsed.doi || fallbackResult.doi,
         fileUrl: doiMeta?.url || parsed.fileUrl || fallbackResult.fileUrl,
-        journal: doiMeta?.containerTitle || parsed.journal || fallbackResult.journal
+        journal: doiMeta?.containerTitle || parsed.journal || fallbackResult.journal,
+        usedModel: targetModel
       });
     }
     return res.json(fallbackResult);
@@ -712,7 +749,8 @@ ${rawText.slice(0, 5000)}`;
 // API endpoint to re-analyze existing documents (e.g. ones with placeholder names like lok1985 or %PDF)
 app.post("/api/reanalyze-document", async (req, res) => {
   try {
-    const { id, title, authors, year, summary, type, folderPath } = req.body;
+    const { id, title, authors, year, summary, type, folderPath, model } = req.body;
+    const targetModel = resolveGeminiModel(model);
     
     // Detect if title is corrupted (e.g. %PDF-1.6, %??, etc.)
     let candidateQuery = (title || "").replace(/\.(pdf|txt|md|docx?)$/i, "").trim();
@@ -796,23 +834,24 @@ ${doiMeta ? `- Crossref & OpenAlex 공식 학술 DB 실시간 조회 결과:
       let response: any = null;
       try {
         response = await ai.models.generateContent({
-          model: "gemini-3.1-flash-lite",
+          model: targetModel,
           contents: prompt,
         });
-      } catch {
+      } catch (modelErr) {
+        console.warn(`Direct model call to ${targetModel} in reanalyze failed, trying fallback:`, modelErr);
         try {
           response = await ai.models.generateContent({
-            model: "gemini-3.5-flash-lite",
+            model: "gemini-3.7-flash",
             contents: prompt,
           });
         } catch {
           try {
             response = await ai.models.generateContent({
-              model: "gemini-3.6-flash",
+              model: "gemini-3.1-flash-lite",
               contents: prompt,
             });
-          } catch (modelErr) {
-            console.warn("AI generation failed in reanalyze:", modelErr);
+          } catch (fallbackErr) {
+            console.warn("AI generation failed in reanalyze:", fallbackErr);
           }
         }
       }
@@ -847,7 +886,8 @@ ${doiMeta ? `- Crossref & OpenAlex 공식 학술 DB 실시간 조회 결과:
           doi: doiMeta?.doi || parsed.doi || undefined,
           fileUrl: doiMeta?.url || (doiMeta?.doi ? `https://doi.org/${doiMeta.doi}` : undefined) || (parsed.doi ? `https://doi.org/${parsed.doi}` : undefined),
           journal: doiMeta?.containerTitle || parsed.journal || undefined,
-          folderPath: folderPath
+          folderPath: folderPath,
+          usedModel: targetModel
         });
       }
     }
@@ -871,7 +911,8 @@ ${doiMeta ? `- Crossref & OpenAlex 공식 학술 DB 실시간 조회 결과:
       doi: doiMeta?.doi,
       fileUrl: doiMeta?.url,
       journal: doiMeta?.containerTitle,
-      folderPath
+      folderPath,
+      usedModel: targetModel
     });
   } catch (err: any) {
     console.error("Re-analyze error (using fallback):", err);

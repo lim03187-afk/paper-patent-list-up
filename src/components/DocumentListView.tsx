@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ResearchDocument } from '../types';
 import { FileText, Shield, ExternalLink, Calendar, Users, Tag, Trash2, ArrowUpRight, CheckSquare, Square, Sparkles, Loader2, Edit3, Check, X } from 'lucide-react';
+import { AiModelSelector } from './AiModelSelector';
 
 interface DocumentListViewProps {
   documents: ResearchDocument[];
@@ -9,7 +10,12 @@ interface DocumentListViewProps {
   onDeleteMultipleDocuments: (ids: string[]) => void;
   onSelectDocument: (doc: ResearchDocument) => void;
   onUpdateDocument?: (doc: ResearchDocument) => void;
-  onReanalyzeDocument?: (doc: ResearchDocument) => Promise<any>;
+  onReanalyzeDocument?: (doc: ResearchDocument, model?: string) => Promise<any>;
+  selectedModel?: string;
+  setSelectedModel?: (modelId: string) => void;
+  customModelName?: string;
+  setCustomModelName?: (name: string) => void;
+  effectiveModel?: string;
 }
 
 export const DocumentListView: React.FC<DocumentListViewProps> = ({
@@ -19,7 +25,12 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
   onDeleteMultipleDocuments,
   onSelectDocument,
   onUpdateDocument,
-  onReanalyzeDocument
+  onReanalyzeDocument,
+  selectedModel = 'gemini-3.7-flash',
+  setSelectedModel = () => {},
+  customModelName = '',
+  setCustomModelName = () => {},
+  effectiveModel = 'gemini-3.7-flash'
 }) => {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [analyzingDocId, setAnalyzingDocId] = useState<string | null>(null);
@@ -61,7 +72,7 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
     if (!onReanalyzeDocument) return;
     setAnalyzingDocId(doc.id);
     try {
-      await onReanalyzeDocument(doc);
+      await onReanalyzeDocument(doc, effectiveModel);
     } catch (err: any) {
       alert(`AI 재분석 실패: ${err.message || '오류 발생'}`);
     } finally {
@@ -75,7 +86,7 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
     try {
       const selectedDocs = documents.filter(d => selectedIds.includes(d.id));
       for (const doc of selectedDocs) {
-        await onReanalyzeDocument(doc);
+        await onReanalyzeDocument(doc, effectiveModel);
       }
       alert(`선택한 ${selectedDocs.length}개 문서의 AI 서지정보 재분석이 완료되었습니다.`);
     } catch (err: any) {
@@ -134,9 +145,21 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
       {/* Selection Action Bar */}
       {selectedIds.length > 0 && (
         <div className="bg-indigo-50/80 border border-indigo-200 px-5 py-3 rounded-2xl flex flex-wrap items-center justify-between gap-3 animate-in fade-in duration-150 shadow-2xs">
-          <div className="flex items-center space-x-2 text-xs font-semibold text-indigo-900">
-            <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 animate-pulse"></span>
-            <span>총 {selectedIds.length}개 문서 선택됨</span>
+          <div className="flex items-center space-x-3 text-xs font-semibold text-indigo-900">
+            <div className="flex items-center space-x-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 animate-pulse"></span>
+              <span>총 {selectedIds.length}개 문서 선택됨</span>
+            </div>
+            <div className="hidden sm:flex items-center gap-1.5 pl-3 border-l border-indigo-200">
+              <span className="text-[11px] text-slate-500">분석 모델:</span>
+              <AiModelSelector
+                selectedModel={selectedModel}
+                setSelectedModel={setSelectedModel}
+                customModelName={customModelName}
+                setCustomModelName={setCustomModelName}
+                compact={true}
+              />
+            </div>
           </div>
           <div className="flex items-center space-x-2">
             {onReanalyzeDocument && (

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Sparkles, FileText, Shield, Loader2, UploadCloud, PlusCircle, FolderUp } from 'lucide-react';
 import { ResearchDocument, DocType } from '../types';
+import { AiModelSelector } from './AiModelSelector';
 
 interface AddDocumentModalProps {
   isOpen: boolean;
@@ -8,6 +9,11 @@ interface AddDocumentModalProps {
   onAddDocument: (doc: ResearchDocument) => void;
   currentFolderPath: string;
   existingDocuments: ResearchDocument[];
+  selectedModel: string;
+  setSelectedModel: (modelId: string) => void;
+  customModelName: string;
+  setCustomModelName: (name: string) => void;
+  effectiveModel: string;
 }
 
 export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
@@ -15,7 +21,12 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
   onClose,
   onAddDocument,
   currentFolderPath,
-  existingDocuments
+  existingDocuments,
+  selectedModel,
+  setSelectedModel,
+  customModelName,
+  setCustomModelName,
+  effectiveModel
 }) => {
   const [activeTab, setActiveTab] = useState<'file' | 'ai' | 'manual'>('file');
   
@@ -96,12 +107,13 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
       let docsToAdd: any[] = [];
       let usedServer = false;
 
-      // 1. Try server analysis first
+      // 1. Try server analysis first with selected model
       try {
         const formData = new FormData();
         selectedFiles.forEach(file => {
           formData.append('files', file);
         });
+        formData.append('model', effectiveModel);
 
         const res = await fetch('/api/upload-and-analyze', {
           method: 'POST',
@@ -230,7 +242,7 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
         const res = await fetch('/api/analyze-document', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ rawText, fileType: aiDocType })
+          body: JSON.stringify({ rawText, fileType: aiDocType, model: effectiveModel })
         });
 
         if (res.ok) {
@@ -376,41 +388,53 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
           </button>
         </div>
 
-        {/* Tabs */}
-        <div className="flex border-b border-slate-100 px-6 pt-3 bg-slate-50/40">
-          <button
-            onClick={() => setActiveTab('file')}
-            className={`pb-3 px-3 text-xs font-semibold border-b-2 transition-colors flex items-center space-x-1.5 ${
-              activeTab === 'file'
-                ? 'border-blue-600 text-blue-700'
-                : 'border-transparent text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            <FolderUp className="w-3.5 h-3.5 text-blue-600" />
-            <span>컴퓨터 파일 업로드</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('ai')}
-            className={`pb-3 px-3 text-xs font-semibold border-b-2 transition-colors flex items-center space-x-1.5 ${
-              activeTab === 'ai'
-                ? 'border-blue-600 text-blue-700'
-                : 'border-transparent text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-            <span>초록 텍스트 붙여넣기</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('manual')}
-            className={`pb-3 px-3 text-xs font-semibold border-b-2 transition-colors flex items-center space-x-1.5 ${
-              activeTab === 'manual'
-                ? 'border-blue-600 text-blue-700'
-                : 'border-transparent text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            <FileText className="w-3.5 h-3.5 text-slate-500" />
-            <span>직접 입력</span>
-          </button>
+        {/* Tabs and Model Selector */}
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 pt-3 bg-slate-50/40">
+          <div className="flex space-x-1">
+            <button
+              onClick={() => setActiveTab('file')}
+              className={`pb-3 px-3 text-xs font-semibold border-b-2 transition-colors flex items-center space-x-1.5 ${
+                activeTab === 'file'
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <FolderUp className="w-3.5 h-3.5 text-blue-600" />
+              <span>컴퓨터 파일 업로드</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('ai')}
+              className={`pb-3 px-3 text-xs font-semibold border-b-2 transition-colors flex items-center space-x-1.5 ${
+                activeTab === 'ai'
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+              <span>초록 텍스트 붙여넣기</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('manual')}
+              className={`pb-3 px-3 text-xs font-semibold border-b-2 transition-colors flex items-center space-x-1.5 ${
+                activeTab === 'manual'
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5 text-slate-500" />
+              <span>직접 입력</span>
+            </button>
+          </div>
+
+          <div className="pb-2">
+            <AiModelSelector
+              selectedModel={selectedModel}
+              setSelectedModel={setSelectedModel}
+              customModelName={customModelName}
+              setCustomModelName={setCustomModelName}
+              compact={true}
+            />
+          </div>
         </div>
 
         {/* Content area */}
