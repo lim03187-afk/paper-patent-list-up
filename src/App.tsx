@@ -180,8 +180,16 @@ export default function App() {
     }
   };
 
-  const handleSaveFolder = async (newFolder: FolderConfig) => {
+  const handleSaveFolder = async (newFolder: FolderConfig, importedDocs?: ResearchDocument[]) => {
     setFolder(newFolder);
+    if (importedDocs && importedDocs.length > 0) {
+      setDocuments(prev => [...importedDocs, ...prev]);
+      if (user?.id) {
+        for (const doc of importedDocs) {
+          await saveDocumentToSupabase(user.id, doc);
+        }
+      }
+    }
     if (user?.id) {
       await saveFolderToSupabase(user.id, newFolder);
     }

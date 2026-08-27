@@ -29,37 +29,31 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
       const cleanName = file.originalname.replace(/\.[^/.]+$/, "");
       const isPatent = cleanName.toLowerCase().includes("patent") || cleanName.toLowerCase().includes("특허") || cleanName.toLowerCase().includes("출원");
       
+      let extractedText = "";
+      try {
+        if (file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf")) {
+          const pdfData = await pdfParse(file.buffer);
+          extractedText = pdfData.text || "";
+        } else if (file.mimetype.startsWith("text/") || file.originalname.toLowerCase().endsWith(".txt") || file.originalname.toLowerCase().endsWith(".md")) {
+          extractedText = file.buffer.toString("utf-8");
+        }
+      } catch (parseErr) {
+        console.log("Local text/pdf extract note:", parseErr);
+      }
+
       let analysisResult = {
         title: cleanName,
         authors: "로컬 연구자",
         year: new Date().getFullYear().toString(),
-        summary: `${file.originalname} 파일이 성공적으로 업로드 및 아카이브되었습니다. 첨부된 문서를 기반으로 연구 아카이브가 생성되었습니다.`,
+        summary: extractedText.trim() ? extractedText.slice(0, 300) + "..." : `${file.originalname} 파일이 성공적으로 업로드 및 아카이브되었습니다.`,
         keywords: [isPatent ? "특허" : "학술논문", "로컬문서", "연구자료"],
         type: isPatent ? "patent" : "paper" as const
       };
 
-      if (apiKey) {
+      if (apiKey && extractedText.trim()) {
         try {
           const ai = new GoogleGenAI({ apiKey });
-          
-          let filePart: any = null;
-          let mimeType = "application/pdf";
-          if (file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf")) {
-            mimeType = "application/pdf";
-          } else if (file.mimetype.startsWith("text/") || file.originalname.toLowerCase().endsWith(".txt") || file.originalname.toLowerCase().endsWith(".md")) {
-            mimeType = "text/plain";
-          } else if (file.mimetype.includes("word") || file.originalname.toLowerCase().endsWith(".docx")) {
-            mimeType = "application/pdf"; // fallback or application/vnd.openxmlformats-officedocument.wordprocessingml.document
-          }
-
-          filePart = {
-            inlineData: {
-              mimeType: mimeType,
-              data: file.buffer.toString("base64")
-            }
-          };
-
-          const prompt = `다음 첨부된 파일(${file.originalname})의 내용을 분석하여 JSON 형식으로 정확히 추출해주세요.
+          const prompt = `다음 첨부된 문서의 내용 일부를 분석하여 JSON 형식으로 정확히 추출해주세요.
 반드시 아래 JSON 포맷으로만 응답하세요 (마크다운 백틱 없이 순수 JSON 객체만):
 {
   "title": "문서의 실제 논문 또는 특허 제목",
@@ -68,16 +62,19 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
   "summary": "핵심 내용 요약 (3~4문장 내외, 한국어)",
   "keywords": ["키워드1", "키워드2", "키워드3"],
   "type": "paper 또는 patent"
-}`;
+}
+
+문서 내용 발췌:
+${extractedText.slice(0, 4000)}`;
 
           const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error("AI analysis timeout")), 25000)
+            setTimeout(() => reject(new Error("AI analysis timeout")), 15000)
           );
 
           const response = await Promise.race([
             ai.models.generateContent({
               model: "gemini-2.5-flash",
-              contents: [filePart, { text: prompt }],
+              contents: prompt,
             }),
             timeoutPromise
           ]) as any;
@@ -97,8 +94,7 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
             };
           }
         } catch (aiErr) {
-          console.error("AI parse error for file:", file.originalname, aiErr);
-          // Fallback to filename/basic analysis without crashing
+          console.error("AI parse quota/error (using extracted text fallback):", aiErr);
         }
       }
 
