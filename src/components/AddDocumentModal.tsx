@@ -7,13 +7,15 @@ interface AddDocumentModalProps {
   onClose: () => void;
   onAddDocument: (doc: ResearchDocument) => void;
   currentFolderPath: string;
+  existingDocuments: ResearchDocument[];
 }
 
 export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
   isOpen,
   onClose,
   onAddDocument,
-  currentFolderPath
+  currentFolderPath,
+  existingDocuments
 }) => {
   const [activeTab, setActiveTab] = useState<'file' | 'ai' | 'manual'>('file');
   
@@ -66,13 +68,25 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
       if (!res.ok) throw new Error(data.error || '파일 업로드 중 오류 발생');
 
       if (data.documents && Array.isArray(data.documents)) {
+        let addedCount = 0;
         data.documents.forEach((parsedDoc: any, idx: number) => {
           const fileObj = selectedFiles[idx];
           const localUrl = fileObj ? URL.createObjectURL(fileObj) : 'https://arxiv.org/';
+          const docTitle = parsedDoc.title || fileObj?.name || '문서 제목';
+
+          // Check duplicate
+          const isDuplicate = existingDocuments.some(
+            d => d.title.toLowerCase().trim() === docTitle.toLowerCase().trim()
+          );
+
+          if (isDuplicate) {
+            const proceed = confirm(`"${docTitle}" 문서는 이미 아카이브에 존재합니다. 중복으로 추가하시겠습니까?`);
+            if (!proceed) return;
+          }
 
           const newDoc: ResearchDocument = {
             id: 'doc-' + Date.now() + '-' + idx,
-            title: parsedDoc.title || fileObj?.name || '문서 제목',
+            title: docTitle,
             authors: parsedDoc.authors || '저자 미상',
             year: parsedDoc.year || '2026',
             summary: parsedDoc.summary || '내용 요약 없음',
@@ -85,11 +99,14 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
           };
 
           onAddDocument(newDoc);
+          addedCount++;
         });
-      }
 
-      onClose();
-      setSelectedFiles([]);
+        if (addedCount > 0) {
+          onClose();
+          setSelectedFiles([]);
+        }
+      }
     } catch (err: any) {
       setErrorMsg(err.message || '파일 처리 중 오류가 발생했습니다.');
     } finally {
@@ -114,9 +131,22 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '분석 중 오류 발생');
 
+      const docTitle = data.title || '제목 없음';
+      const isDuplicate = existingDocuments.some(
+        d => d.title.toLowerCase().trim() === docTitle.toLowerCase().trim()
+      );
+
+      if (isDuplicate) {
+        const proceed = confirm(`"${docTitle}" 문서는 이미 아카이브에 존재합니다. 중복으로 추가하시겠습니까?`);
+        if (!proceed) {
+          setIsAnalyzing(false);
+          return;
+        }
+      }
+
       const newDoc: ResearchDocument = {
         id: 'doc-' + Date.now(),
-        title: data.title || '제목 없음',
+        title: docTitle,
         authors: data.authors || '저자 미상',
         year: data.year || '2026',
         summary: data.summary || rawText.slice(0, 200),
@@ -142,9 +172,19 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
     e.preventDefault();
     if (!title.trim() || !authors.trim()) return;
 
+    const docTitle = title.trim();
+    const isDuplicate = existingDocuments.some(
+      d => d.title.toLowerCase().trim() === docTitle.toLowerCase().trim()
+    );
+
+    if (isDuplicate) {
+      const proceed = confirm(`"${docTitle}" 문서는 이미 아카이브에 존재합니다. 중복으로 추가하시겠습니까?`);
+      if (!proceed) return;
+    }
+
     const newDoc: ResearchDocument = {
       id: 'doc-' + Date.now(),
-      title: title.trim(),
+      title: docTitle,
       authors: authors.trim(),
       year: year.trim() || '2026',
       summary: summary.trim() || '요약 내용이 없습니다.',

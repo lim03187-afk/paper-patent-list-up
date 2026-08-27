@@ -180,6 +180,15 @@ export default function App() {
     }
   };
 
+  const handleDeleteMultipleDocuments = async (ids: string[]) => {
+    setDocuments(prev => prev.filter(d => !ids.includes(d.id)));
+    if (user?.id) {
+      for (const id of ids) {
+        await deleteDocumentFromSupabase(user.id, id);
+      }
+    }
+  };
+
   const handleSaveFolder = async (newFolder: FolderConfig, importedDocs?: ResearchDocument[]) => {
     setFolder(newFolder);
     if (importedDocs && importedDocs.length > 0) {
@@ -366,6 +375,7 @@ export default function App() {
               documents={filteredDocuments}
               viewMode={viewMode}
               onDeleteDocument={handleDeleteDocument}
+              onDeleteMultipleDocuments={handleDeleteMultipleDocuments}
               onSelectDocument={(doc) => setSelectedDocForDetail(doc)}
             />
           </div>
@@ -394,6 +404,7 @@ export default function App() {
         onClose={() => setIsAddModalOpen(false)}
         onAddDocument={handleAddDocument}
         currentFolderPath={folder.path}
+        existingDocuments={documents}
       />
 
       <DocumentDetailModal
