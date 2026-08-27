@@ -3,6 +3,7 @@ dotenv.config();
 
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import multer from "multer";
@@ -10,6 +11,28 @@ import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
 const pdfParseLib = require("pdf-parse/lib/pdf-parse.js");
+
+// Dynamic API key getter that reads from process.env or .env file directly
+function getGeminiApiKey(): string | undefined {
+  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 0) {
+    return process.env.GEMINI_API_KEY.trim();
+  }
+  try {
+    const envPath = path.join(process.cwd(), ".env");
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, "utf-8");
+      const match = content.match(/^GEMINI_API_KEY\s*=\s*(.+)$/m);
+      if (match && match[1]) {
+        const key = match[1].trim().replace(/^["']|["']$/g, "");
+        if (key) {
+          process.env.GEMINI_API_KEY = key;
+          return key;
+        }
+      }
+    }
+  } catch {}
+  return undefined;
+}
 
 const app = express();
 const PORT = 3000;
@@ -241,7 +264,7 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
       return res.status(400).json({ error: "업로드된 파일이 없습니다." });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = getGeminiApiKey();
     const results = [];
 
     for (const file of files) {
@@ -468,7 +491,7 @@ app.post("/api/analyze-document", async (req, res) => {
   };
 
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = getGeminiApiKey();
     if (!apiKey) {
       return res.json(fallbackResult);
     }
@@ -594,7 +617,7 @@ app.post("/api/reanalyze-document", async (req, res) => {
       doiMeta = await searchCrossrefByTitle(cleanFilename);
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = getGeminiApiKey();
     if (apiKey) {
       const ai = new GoogleGenAI({ apiKey });
       const prompt = `당신은 전 세계 학술 논문 및 특허 문헌 분석 최고 전문가입니다.
