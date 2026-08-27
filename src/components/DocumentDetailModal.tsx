@@ -1,17 +1,38 @@
-import React from 'react';
-import { X, FileText, Shield, Calendar, Users, Tag, ExternalLink, HardDrive, Copy, Check, Globe, BookOpen } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, FileText, Shield, Calendar, Users, Tag, ExternalLink, HardDrive, Copy, Check, Globe, BookOpen, Sparkles, Loader2, Edit3, Save } from 'lucide-react';
 import { ResearchDocument } from '../types';
 
 interface DocumentDetailModalProps {
   document: ResearchDocument | null;
   onClose: () => void;
+  onUpdateDocument?: (doc: ResearchDocument) => void;
+  onReanalyzeDocument?: (doc: ResearchDocument) => Promise<any>;
 }
 
 export const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
   document,
-  onClose
+  onClose,
+  onUpdateDocument,
+  onReanalyzeDocument
 }) => {
-  const [copied, setCopied] = React.useState(false);
+  const [copied, setCopied] = useState(false);
+  const [isReanalyzing, setIsReanalyzing] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+
+  const [editTitle, setEditTitle] = useState('');
+  const [editAuthors, setEditAuthors] = useState('');
+  const [editYear, setEditYear] = useState('');
+  const [editSummary, setEditSummary] = useState('');
+
+  React.useEffect(() => {
+    if (document) {
+      setEditTitle(document.title);
+      setEditAuthors(document.authors);
+      setEditYear(document.year);
+      setEditSummary(document.summary);
+      setIsEditing(false);
+    }
+  }, [document]);
 
   if (!document) return null;
 
@@ -24,6 +45,37 @@ export const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
     navigator.clipboard.writeText(citation);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleReanalyze = async () => {
+    if (!onReanalyzeDocument) return;
+    setIsReanalyzing(true);
+    try {
+      const updated = await onReanalyzeDocument(document);
+      if (updated) {
+        setEditTitle(updated.title);
+        setEditAuthors(updated.authors);
+        setEditYear(updated.year);
+        setEditSummary(updated.summary);
+      }
+    } catch (err: any) {
+      alert(`AI 재분석 실패: ${err.message || '오류 발생'}`);
+    } finally {
+      setIsReanalyzing(false);
+    }
+  };
+
+  const handleSaveEdit = () => {
+    if (!onUpdateDocument) return;
+    const updatedDoc: ResearchDocument = {
+      ...document,
+      title: editTitle.trim() || document.title,
+      authors: editAuthors.trim() || document.authors,
+      year: editYear.trim() || document.year,
+      summary: editSummary.trim() || document.summary,
+    };
+    onUpdateDocument(updatedDoc);
+    setIsEditing(false);
   };
 
   return (
@@ -63,61 +115,154 @@ export const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
 
         {/* Body content */}
         <div className="p-6 overflow-y-auto space-y-5">
-          {/* Title */}
-          <div>
-            <h2 className="text-lg font-bold text-slate-900 leading-snug">
-              {document.title}
-            </h2>
-            {document.journal && (
-              <div className="flex items-center space-x-1.5 text-xs text-indigo-600 font-medium mt-1">
-                <BookOpen className="w-3.5 h-3.5" />
-                <span>{document.journal}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Authors */}
-          <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-100">
-            <span className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
-              저자 (Authors)
-            </span>
-            <div className="flex items-center space-x-2 text-xs font-medium text-slate-800">
-              <Users className="w-4 h-4 text-slate-400 shrink-0" />
-              <span>{document.authors}</span>
+          {/* Action Bar for AI Re-analysis & Edit */}
+          <div className="flex items-center justify-between bg-indigo-50/50 border border-indigo-100/80 rounded-xl p-3">
+            <div className="text-xs text-indigo-900 font-medium">
+              서지 정보(제목, 저자, 연도, 요약) AI 정밀 분석 및 수정
+            </div>
+            <div className="flex items-center space-x-2">
+              {onReanalyzeDocument && (
+                <button
+                  onClick={handleReanalyze}
+                  disabled={isReanalyzing}
+                  className="flex items-center space-x-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-2xs transition-colors"
+                >
+                  {isReanalyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                  <span>{isReanalyzing ? 'AI 분석 중...' : 'AI 서지정보 재분석'}</span>
+                </button>
+              )}
+              <button
+                onClick={() => setIsEditing(!isEditing)}
+                className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                  isEditing ? 'bg-amber-100 text-amber-800' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>{isEditing ? '수정 모드 활성' : '직접 수정'}</span>
+              </button>
             </div>
           </div>
 
-          {/* DOI Direct Web Link Box */}
-          {doiUrl && (
-            <div className="bg-indigo-50/30 border border-indigo-100 rounded-xl p-3.5 flex items-center justify-between">
-              <div className="flex items-center space-x-2 text-xs">
-                <Globe className="w-4 h-4 text-indigo-600 shrink-0" />
-                <div className="truncate">
-                  <span className="font-semibold text-slate-700 mr-2">공식 DOI 웹페이지:</span>
-                  <span className="font-mono text-indigo-600">{doiUrl}</span>
+          {isEditing ? (
+            <div className="space-y-3.5 p-4 bg-slate-50 rounded-2xl border border-slate-200">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">제목 (Title)</label>
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-xl outline-none"
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">저자 (Writer)</label>
+                  <input
+                    type="text"
+                    value={editAuthors}
+                    onChange={(e) => setEditAuthors(e.target.value)}
+                    className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-xl outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">발행연도 (Year)</label>
+                  <input
+                    type="text"
+                    value={editYear}
+                    onChange={(e) => setEditYear(e.target.value)}
+                    className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-xl outline-none"
+                  />
                 </div>
               </div>
-              <a
-                href={doiUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="shrink-0 flex items-center space-x-1 px-3 py-1 bg-white hover:bg-indigo-50 text-indigo-600 border border-indigo-200 rounded-lg text-xs font-medium transition-colors shadow-2xs"
-              >
-                <span>사이트 이동</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">내용 요약 (Summary)</label>
+                <textarea
+                  value={editSummary}
+                  onChange={(e) => setEditSummary(e.target.value)}
+                  rows={4}
+                  className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-xl outline-none leading-relaxed"
+                />
+              </div>
+              <div className="flex justify-end space-x-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsEditing(false)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-200"
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveEdit}
+                  className="flex items-center space-x-1 px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-xs"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>수정 내용 저장</span>
+                </button>
+              </div>
             </div>
-          )}
+          ) : (
+            <>
+              {/* Title */}
+              <div>
+                <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                  제목 (Title)
+                </span>
+                <h2 className="text-lg font-bold text-slate-900 leading-snug">
+                  {document.title}
+                </h2>
+                {document.journal && (
+                  <div className="flex items-center space-x-1.5 text-xs text-indigo-600 font-medium mt-1">
+                    <BookOpen className="w-3.5 h-3.5" />
+                    <span>{document.journal}</span>
+                  </div>
+                )}
+              </div>
 
-          {/* Summary */}
-          <div>
-            <span className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
-              내용 요약 (Summary)
-            </span>
-            <div className="p-4 bg-indigo-50/40 rounded-xl border border-indigo-100 text-xs text-slate-700 leading-relaxed">
-              {document.summary}
-            </div>
-          </div>
+              {/* Authors */}
+              <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-100">
+                <span className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                  저자 (Writer / Authors)
+                </span>
+                <div className="flex items-center space-x-2 text-xs font-medium text-slate-800">
+                  <Users className="w-4 h-4 text-slate-400 shrink-0" />
+                  <span>{document.authors}</span>
+                </div>
+              </div>
+
+              {/* DOI Direct Web Link Box */}
+              {doiUrl && (
+                <div className="bg-indigo-50/30 border border-indigo-100 rounded-xl p-3.5 flex items-center justify-between">
+                  <div className="flex items-center space-x-2 text-xs">
+                    <Globe className="w-4 h-4 text-indigo-600 shrink-0" />
+                    <div className="truncate">
+                      <span className="font-semibold text-slate-700 mr-2">공식 DOI 웹페이지:</span>
+                      <span className="font-mono text-indigo-600">{doiUrl}</span>
+                    </div>
+                  </div>
+                  <a
+                    href={doiUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 flex items-center space-x-1 px-3 py-1 bg-white hover:bg-indigo-50 text-indigo-600 border border-indigo-200 rounded-lg text-xs font-medium transition-colors shadow-2xs"
+                  >
+                    <span>사이트 이동</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+              )}
+
+              {/* Summary */}
+              <div>
+                <span className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+                  내용 요약 (Summary)
+                </span>
+                <div className="p-4 bg-indigo-50/40 rounded-xl border border-indigo-100 text-xs text-slate-700 leading-relaxed font-medium">
+                  {document.summary}
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Keywords */}
           <div>
@@ -169,7 +314,7 @@ export const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
               닫기
             </button>
             <a
-              href={doiUrl || document.fileUrl}
+              href={doiUrl || document.fileUrl || `https://arxiv.org/`}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center space-x-1.5 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-medium transition-colors shadow-xs"

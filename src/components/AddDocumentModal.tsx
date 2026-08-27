@@ -91,13 +91,18 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
           : (typeof parsedDoc.authors === 'string' && parsedDoc.authors.trim() ? parsedDoc.authors.trim() : '저자 미상');
         const yearString = String(parsedDoc.year || new Date().getFullYear()).replace(/\D/g, '') || String(new Date().getFullYear());
 
+        let finalSummary = parsedDoc.summary || '내용 요약 없음';
+        if (!finalSummary.startsWith('[제목:') && !finalSummary.startsWith('[저자:')) {
+          finalSummary = `[제목: ${docTitle} | 저자: ${authorsString} | 발행연도: ${yearString}년] ${finalSummary}`;
+        }
+
         const newDoc: ResearchDocument = {
           id: 'doc-' + Date.now() + '-' + idx,
           title: docTitle,
           authors: authorsString,
           year: yearString,
-          summary: parsedDoc.summary || '내용 요약 없음',
-          keywords: Array.isArray(parsedDoc.keywords) ? parsedDoc.keywords : ['연구자료'],
+          summary: finalSummary,
+          keywords: Array.isArray(parsedDoc.keywords) && parsedDoc.keywords.length > 0 ? parsedDoc.keywords : ['연구자료'],
           type: parsedDoc.type === 'patent' ? 'patent' : 'paper',
           fileUrl: parsedDoc.fileUrl || localUrl,
           folderPath: currentFolderPath,
@@ -157,12 +162,17 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
         : (typeof data.authors === 'string' && data.authors.trim() ? data.authors.trim() : '저자 미상');
       const yearString = String(data.year || new Date().getFullYear()).replace(/\D/g, '') || String(new Date().getFullYear());
 
+      let finalSummary = data.summary || rawText.slice(0, 200);
+      if (!finalSummary.startsWith('[제목:') && !finalSummary.startsWith('[저자:')) {
+        finalSummary = `[제목: ${docTitle} | 저자: ${authorsString} | 발행연도: ${yearString}년] ${finalSummary}`;
+      }
+
       const newDoc: ResearchDocument = {
         id: 'doc-' + Date.now(),
         title: docTitle,
         authors: authorsString,
         year: yearString,
-        summary: data.summary || rawText.slice(0, 200),
+        summary: finalSummary,
         keywords: Array.isArray(data.keywords) ? data.keywords : ['연구', '신규문서'],
         type: data.type === 'patent' ? 'patent' : 'paper',
         fileUrl: data.fileUrl || (data.doi ? `https://doi.org/${data.doi}` : 'https://arxiv.org/'),
@@ -197,12 +207,18 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
       if (!proceed) return;
     }
 
+    const docYear = year.trim() || '2026';
+    let finalSummary = summary.trim() || '요약 내용이 없습니다.';
+    if (!finalSummary.startsWith('[제목:') && !finalSummary.startsWith('[저자:')) {
+      finalSummary = `[제목: ${docTitle} | 저자: ${authors.trim()} | 발행연도: ${docYear}년] ${finalSummary}`;
+    }
+
     const newDoc: ResearchDocument = {
       id: 'doc-' + Date.now(),
       title: docTitle,
       authors: authors.trim(),
-      year: year.trim() || '2026',
-      summary: summary.trim() || '요약 내용이 없습니다.',
+      year: docYear,
+      summary: finalSummary,
       keywords: keywordsStr ? keywordsStr.split(',').map(k => k.trim()).filter(Boolean) : ['기타'],
       type: docType,
       fileUrl: fileUrl.trim() || 'https://arxiv.org/',

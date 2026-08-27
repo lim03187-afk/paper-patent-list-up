@@ -531,6 +531,125 @@ ${rawText.slice(0, 5000)}`;
   }
 });
 
+// API endpoint to re-analyze existing documents (e.g. ones with placeholder names like lok1985)
+app.post("/api/reanalyze-document", async (req, res) => {
+  try {
+    const { id, title, authors, year, summary, type, folderPath } = req.body;
+    const cleanSearchQuery = (title || "").replace(/\.(pdf|txt|md|docx?)$/i, "").trim();
+
+    let doiMeta: DoiMetadata | null = null;
+
+    // Check if title has DOI pattern or search Crossref
+    const extractedDoi = extractDoiFromText(title + " " + (summary || ""));
+    if (extractedDoi) {
+      doiMeta = await fetchMetadataByDoi(extractedDoi);
+    }
+    if (!doiMeta && cleanSearchQuery.length > 2) {
+      doiMeta = await searchCrossrefByTitle(cleanSearchQuery);
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (apiKey) {
+      const ai = new GoogleGenAI({ apiKey });
+      const prompt = `당신은 전 세계 학술 논문 및 특허 문헌 분석 최고 전문가입니다.
+기존 아카이브에 등록된 문서의 정보가 불완전하거나 파일명(예: "${cleanSearchQuery}")만 있는 상태입니다.
+해당 문서의 실제 정식 서지 정보(Title, Writer/Authors, Published Year)와 상세 요약을 정확히 분석하여 JSON으로 반환해주세요.
+
+[입력 정보]
+- 제목/파일명: ${title}
+- 저자: ${authors || "미상"}
+- 연도: ${year || "미상"}
+- 기존 요약: ${summary || ""}
+- 유형: ${type || "paper"}
+${doiMeta ? `- Crossref 검색 결과: 제목: ${doiMeta.title}, 저자: ${doiMeta.authors}, 연도: ${doiMeta.year}, 저널: ${doiMeta.containerTitle || ""}` : ""}
+
+[필수 추출 규칙]
+1. title: 공식 학술 논문 제목 또는 특허 정식 명칭 (예: "Particle size control in dispersion polymerization of polystyrene")
+2. authors: 저자 전체 성명 (쉼표 구분, 예: "Kar P. Lok, Christopher K. Ober")
+3. year: 출판/발행 연도 4자리 (예: "1985")
+4. summary: **[제목: {title} | 저자: {authors} | 발행연도: {year}년]** 서지 표기를 최상단에 포함하고, 연구의 목적, 주요 방법론, 핵심 결론을 2~4문장으로 명확하게 한국어로 작성
+5. keywords: 기술 키워드 3~5개 배열
+6. type: "${type || 'paper'}"
+7. doi: DOI가 있다면 기재 (예: 10.1139/v85-033)
+8. journal: 학술지명 또는 출판기관 (예: "Canadian Journal of Chemistry")
+
+반드시 마크다운 백틱 없이 순수 JSON 객체만 응답하세요:
+{
+  "title": "공식 논문 제목",
+  "authors": "저자1, 저자2",
+  "year": "1985",
+  "summary": "[제목: ... | 저자: ... | 발행연도: 1985년] 요약 내용",
+  "keywords": ["키워드1", "키워드2"],
+  "type": "paper",
+  "doi": null,
+  "journal": "학술지명"
+}`;
+
+      let response: any = null;
+      try {
+        response = await ai.models.generateContent({
+          model: "gemini-3.5-flash-lite",
+          contents: prompt,
+        });
+      } catch {
+        response = await ai.models.generateContent({
+          model: "gemini-3.6-flash",
+          contents: prompt,
+        });
+      }
+
+      const text = response?.text ? response.text.trim() : "";
+      if (text) {
+        const cleanJson = text.replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/\s*```$/, "");
+        const parsed = JSON.parse(cleanJson);
+
+        const { cleanTitle, cleanAuthors, cleanYear } = cleanMetadata(
+          doiMeta?.title || parsed.title || title,
+          doiMeta?.authors || parsed.authors || authors,
+          doiMeta?.year || parsed.year || year
+        );
+
+        let finalSummary = parsed.summary || summary || "내용 요약";
+        if (!finalSummary.includes(cleanAuthors) && cleanAuthors !== "저자 미상") {
+          finalSummary = `[저자: ${cleanAuthors} (${cleanYear})] ${finalSummary}`;
+        }
+
+        return res.json({
+          id: id,
+          title: cleanTitle,
+          authors: cleanAuthors,
+          year: cleanYear,
+          summary: finalSummary,
+          keywords: Array.isArray(parsed.keywords) && parsed.keywords.length > 0 ? parsed.keywords : ["학술연구"],
+          type: parsed.type === "patent" ? "patent" : "paper",
+          doi: doiMeta?.doi || parsed.doi || undefined,
+          fileUrl: doiMeta?.url || `https://doi.org/${doiMeta?.doi || parsed.doi || ""}`,
+          journal: doiMeta?.containerTitle || parsed.journal || undefined,
+          folderPath: folderPath
+        });
+      }
+    }
+
+    // Fallback if no Gemini key
+    return res.json({
+      id,
+      title: doiMeta?.title || title,
+      authors: doiMeta?.authors || authors,
+      year: doiMeta?.year || year,
+      summary: `[제목: ${doiMeta?.title || title} | 저자: ${doiMeta?.authors || authors} | 발행연도: ${doiMeta?.year || year}년] ` + (summary || "문서 분석 완료"),
+      keywords: ["연구자료"],
+      type: type || "paper",
+      doi: doiMeta?.doi,
+      fileUrl: doiMeta?.url || undefined,
+      journal: doiMeta?.containerTitle,
+      folderPath
+    });
+  } catch (err: any) {
+    console.error("Re-analyze error:", err);
+    return res.status(500).json({ error: err.message || "문서 재분석 중 오류 발생" });
+  }
+});
+
 async function startServer() {
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

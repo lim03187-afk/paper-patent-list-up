@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ResearchDocument } from '../types';
-import { FileText, Shield, ExternalLink, Calendar, Users, Tag, Trash2, ArrowUpRight, CheckSquare, Square } from 'lucide-react';
+import { FileText, Shield, ExternalLink, Calendar, Users, Tag, Trash2, ArrowUpRight, CheckSquare, Square, Sparkles, Loader2, Edit3, Check, X } from 'lucide-react';
 
 interface DocumentListViewProps {
   documents: ResearchDocument[];
@@ -8,6 +8,8 @@ interface DocumentListViewProps {
   onDeleteDocument: (id: string) => void;
   onDeleteMultipleDocuments: (ids: string[]) => void;
   onSelectDocument: (doc: ResearchDocument) => void;
+  onUpdateDocument?: (doc: ResearchDocument) => void;
+  onReanalyzeDocument?: (doc: ResearchDocument) => Promise<any>;
 }
 
 export const DocumentListView: React.FC<DocumentListViewProps> = ({
@@ -15,9 +17,20 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
   viewMode,
   onDeleteDocument,
   onDeleteMultipleDocuments,
-  onSelectDocument
+  onSelectDocument,
+  onUpdateDocument,
+  onReanalyzeDocument
 }) => {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [analyzingDocId, setAnalyzingDocId] = useState<string | null>(null);
+  const [bulkAnalyzing, setBulkAnalyzing] = useState(false);
+
+  // Quick edit modal state
+  const [editingDoc, setEditingDoc] = useState<ResearchDocument | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editAuthors, setEditAuthors] = useState('');
+  const [editYear, setEditYear] = useState('');
+  const [editSummary, setEditSummary] = useState('');
 
   const handleToggleSelect = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -42,6 +55,58 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
     }
   };
 
+  const handleSingleReanalyze = async (doc: ResearchDocument, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onReanalyzeDocument) return;
+    setAnalyzingDocId(doc.id);
+    try {
+      await onReanalyzeDocument(doc);
+    } catch (err: any) {
+      alert(`AI 재분석 실패: ${err.message || '오류 발생'}`);
+    } finally {
+      setAnalyzingDocId(null);
+    }
+  };
+
+  const handleBulkReanalyze = async () => {
+    if (selectedIds.length === 0 || !onReanalyzeDocument) return;
+    setBulkAnalyzing(true);
+    try {
+      const selectedDocs = documents.filter(d => selectedIds.includes(d.id));
+      for (const doc of selectedDocs) {
+        await onReanalyzeDocument(doc);
+      }
+      alert(`선택한 ${selectedDocs.length}개 문서의 AI 서지정보 재분석이 완료되었습니다.`);
+    } catch (err: any) {
+      alert(`일괄 재분석 중 일부 오류: ${err.message}`);
+    } finally {
+      setBulkAnalyzing(false);
+    }
+  };
+
+  const handleStartEdit = (doc: ResearchDocument, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingDoc(doc);
+    setEditTitle(doc.title);
+    setEditAuthors(doc.authors);
+    setEditYear(doc.year);
+    setEditSummary(doc.summary);
+  };
+
+  const handleSaveEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingDoc || !onUpdateDocument) return;
+    const updated: ResearchDocument = {
+      ...editingDoc,
+      title: editTitle.trim() || editingDoc.title,
+      authors: editAuthors.trim() || editingDoc.authors,
+      year: editYear.trim() || editingDoc.year,
+      summary: editSummary.trim() || editingDoc.summary
+    };
+    onUpdateDocument(updated);
+    setEditingDoc(null);
+  };
+
   if (documents.length === 0) {
     return (
       <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center my-6 shadow-2xs">
@@ -60,18 +125,30 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
     <div className="space-y-4">
       {/* Selection Action Bar */}
       {selectedIds.length > 0 && (
-        <div className="bg-rose-50 border border-rose-200 px-5 py-3 rounded-xl flex items-center justify-between animate-in fade-in duration-150">
-          <div className="flex items-center space-x-2 text-xs font-semibold text-rose-800">
-            <span className="w-2 h-2 rounded-full bg-rose-600 animate-pulse"></span>
-            <span>총 {selectedIds.length}개 문서가 선택되었습니다.</span>
+        <div className="bg-indigo-50/80 border border-indigo-200 px-5 py-3 rounded-2xl flex flex-wrap items-center justify-between gap-3 animate-in fade-in duration-150 shadow-2xs">
+          <div className="flex items-center space-x-2 text-xs font-semibold text-indigo-900">
+            <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 animate-pulse"></span>
+            <span>총 {selectedIds.length}개 문서 선택됨</span>
           </div>
-          <button
-            onClick={handleBulkDelete}
-            className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold shadow-2xs transition-colors flex items-center space-x-1.5"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>선택 문서 일괄 삭제</span>
-          </button>
+          <div className="flex items-center space-x-2">
+            {onReanalyzeDocument && (
+              <button
+                onClick={handleBulkReanalyze}
+                disabled={bulkAnalyzing}
+                className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-2xs transition-colors flex items-center space-x-1.5"
+              >
+                {bulkAnalyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                <span>{bulkAnalyzing ? 'AI 서지정보 분석 중...' : '선택 문서 AI 서지정보 재분석'}</span>
+              </button>
+            )}
+            <button
+              onClick={handleBulkDelete}
+              className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold shadow-2xs transition-colors flex items-center space-x-1.5"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>선택 문서 일괄 삭제</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -80,19 +157,28 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
           {documents.map((doc) => {
             const isPatent = doc.type === 'patent';
             const isSelected = selectedIds.includes(doc.id);
+            const isCurrentlyAnalyzing = analyzingDocId === doc.id;
+
             return (
               <div
                 key={doc.id}
                 onClick={(e) => handleToggleSelect(doc.id, e)}
-                className={`bg-white rounded-2xl border transition-all duration-200 flex flex-col justify-between overflow-hidden group cursor-pointer ${
+                className={`bg-white rounded-2xl border transition-all duration-200 flex flex-col justify-between overflow-hidden group cursor-pointer relative ${
                   isSelected 
                     ? 'border-indigo-600 ring-2 ring-indigo-500/20 bg-indigo-50/10 shadow-md' 
                     : 'border-slate-200/80 hover:border-indigo-300/80 shadow-2xs hover:shadow-md'
                 }`}
               >
+                {isCurrentlyAnalyzing && (
+                  <div className="absolute inset-0 bg-white/80 backdrop-blur-2xs z-20 flex flex-col items-center justify-center space-y-2">
+                    <Loader2 className="w-6 h-6 animate-spin text-indigo-600" />
+                    <span className="text-xs font-semibold text-indigo-700">AI 서지정보 분석 중...</span>
+                  </div>
+                )}
+
                 <div>
                   {/* Top Badge & Year Bar */}
-                  <div className="px-5 pt-4 pb-3 flex items-center justify-between border-b border-slate-100 bg-slate-50/50">
+                  <div className="px-5 pt-3.5 pb-2.5 flex items-center justify-between border-b border-slate-100 bg-slate-50/60">
                     <div className="flex items-center space-x-2">
                       <button
                         type="button"
@@ -118,55 +204,77 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
                       </span>
                       <span className="inline-flex items-center space-x-1 text-xs font-medium text-slate-600 bg-white px-2 py-0.5 rounded border border-slate-200 shadow-2xs">
                         <Calendar className="w-3 h-3 text-slate-400" />
-                        <span>{doc.year}</span>
+                        <span>{doc.year}년</span>
                       </span>
-                      {doc.doi && (
-                        <span className="inline-flex items-center text-[10px] font-semibold text-indigo-700 bg-indigo-50/80 px-2 py-0.5 rounded border border-indigo-200" title={`DOI: ${doc.doi}`}>
-                          DOI 등록
-                        </span>
-                      )}
                     </div>
 
-                    {/* Delete button */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (confirm(`"${doc.title}" 문서를 삭제하시겠습니까?`)) {
-                          onDeleteDocument(doc.id);
-                          setSelectedIds(prev => prev.filter(i => i !== doc.id));
-                        }
-                      }}
-                      className="text-slate-400 hover:text-rose-600 p-1 rounded-lg hover:bg-rose-50 transition-colors"
-                      title="문서 삭제"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {/* Actions: AI Reanalyze, Edit, Delete */}
+                    <div className="flex items-center space-x-1" onClick={(e) => e.stopPropagation()}>
+                      {onReanalyzeDocument && (
+                        <button
+                          onClick={(e) => handleSingleReanalyze(doc, e)}
+                          className="text-slate-400 hover:text-indigo-600 p-1.5 rounded-lg hover:bg-indigo-50 transition-colors"
+                          title="AI 서지정보(제목, 저자, 연도, 요약) 다시 정밀 분석"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                        </button>
+                      )}
+                      <button
+                        onClick={(e) => handleStartEdit(doc, e)}
+                        className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+                        title="서지정보 직접 수정"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm(`"${doc.title}" 문서를 삭제하시겠습니까?`)) {
+                            onDeleteDocument(doc.id);
+                            setSelectedIds(prev => prev.filter(i => i !== doc.id));
+                          }
+                        }}
+                        className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-colors"
+                        title="문서 삭제"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
 
-                  {/* Main Body */}
+                  {/* Main Body with Clear Title, Writer, Year, Summary */}
                   <div className="p-5 space-y-3">
                     {/* Title */}
-                    <h3
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelectDocument(doc);
-                      }}
-                      className="text-sm font-bold text-slate-900 group-hover:text-indigo-600 transition-colors cursor-pointer line-clamp-2 leading-snug"
-                      title={doc.title}
-                    >
-                      {doc.title}
-                    </h3>
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">제목 (Title)</span>
+                      <h3
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectDocument(doc);
+                        }}
+                        className="text-sm font-bold text-slate-900 group-hover:text-indigo-600 transition-colors cursor-pointer line-clamp-2 leading-snug"
+                        title={doc.title}
+                      >
+                        {doc.title}
+                      </h3>
+                    </div>
 
-                    {/* Authors */}
-                    <div className="flex items-start space-x-1.5 text-xs text-slate-600">
-                      <Users className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
-                      <span className="line-clamp-1 font-medium">{doc.authors}</span>
+                    {/* Authors / Writer */}
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">저자 (Writer)</span>
+                      <div className="flex items-center space-x-1.5 text-xs text-slate-700 font-medium">
+                        <Users className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span className="line-clamp-1" title={doc.authors}>{doc.authors}</span>
+                      </div>
                     </div>
 
                     {/* Summary */}
-                    <p className="text-xs text-slate-600 line-clamp-3 leading-relaxed bg-slate-50/70 p-2.5 rounded-xl border border-slate-100">
-                      {doc.summary}
-                    </p>
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">내용 요약 (Summary)</span>
+                      <div className="text-xs text-slate-600 line-clamp-3 leading-relaxed bg-slate-50/80 p-2.5 rounded-xl border border-slate-100">
+                        {doc.summary}
+                      </div>
+                    </div>
 
                     {/* Keywords */}
                     <div className="flex flex-wrap gap-1 pt-1">
@@ -189,7 +297,7 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
                     {doc.folderPath}
                   </span>
                   <a
-                    href={doc.fileUrl}
+                    href={doc.fileUrl || `https://arxiv.org/`}
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={(e) => e.stopPropagation()}
@@ -225,17 +333,19 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
                   </th>
                   <th className="py-3 px-4 w-20">유형</th>
                   <th className="py-3 px-4 w-20">발행연도</th>
-                  <th className="py-3 px-4 min-w-[220px]">제목</th>
-                  <th className="py-3 px-4 min-w-[160px]">저자</th>
-                  <th className="py-3 px-4 min-w-[280px]">내용 요약</th>
+                  <th className="py-3 px-4 min-w-[220px]">제목 (Title)</th>
+                  <th className="py-3 px-4 min-w-[160px]">저자 (Writer)</th>
+                  <th className="py-3 px-4 min-w-[280px]">내용 요약 (Summary)</th>
                   <th className="py-3 px-4 min-w-[140px]">키워드</th>
-                  <th className="py-3 px-4 text-right w-24">링크/관리</th>
+                  <th className="py-3 px-4 text-right w-28">관리</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
                 {documents.map((doc) => {
                   const isPatent = doc.type === 'patent';
                   const isSelected = selectedIds.includes(doc.id);
+                  const isCurrentlyAnalyzing = analyzingDocId === doc.id;
+
                   return (
                     <tr 
                       key={doc.id} 
@@ -268,7 +378,7 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
                         </span>
                       </td>
                       <td className="py-3.5 px-4 whitespace-nowrap font-medium text-slate-900">
-                        {doc.year}
+                        {doc.year}년
                       </td>
                       <td className="py-3.5 px-4 font-semibold text-slate-900">
                         <button
@@ -289,7 +399,7 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
                         )}
                       </td>
                       <td className="py-3.5 px-4 text-slate-600">
-                        <div className="line-clamp-1" title={doc.authors}>
+                        <div className="line-clamp-1 font-medium" title={doc.authors}>
                           {doc.authors}
                         </div>
                       </td>
@@ -308,23 +418,34 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
                               {kw}
                             </span>
                           ))}
-                          {doc.keywords.length > 3 && (
-                            <span className="text-[10px] text-slate-400 self-center">
-                              +{doc.keywords.length - 3}
-                            </span>
-                          )}
                         </div>
                       </td>
                       <td className="py-3.5 px-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-end space-x-2">
+                        <div className="flex items-center justify-end space-x-1.5">
+                          {onReanalyzeDocument && (
+                            <button
+                              onClick={(e) => handleSingleReanalyze(doc, e)}
+                              disabled={isCurrentlyAnalyzing}
+                              className="text-indigo-600 hover:bg-indigo-50 p-1.5 rounded-lg transition-colors"
+                              title="AI 재분석"
+                            >
+                              {isCurrentlyAnalyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                            </button>
+                          )}
+                          <button
+                            onClick={(e) => handleStartEdit(doc, e)}
+                            className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+                            title="수정"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
                           <a
-                            href={doc.fileUrl}
+                            href={doc.fileUrl || `https://arxiv.org/`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex items-center space-x-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-lg font-semibold transition-colors shadow-2xs"
+                            className="inline-flex items-center space-x-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-1 rounded-lg font-semibold transition-colors shadow-2xs"
                             title="파일 열기"
                           >
-                            <span>열기</span>
                             <ArrowUpRight className="w-3 h-3" />
                           </a>
                           <button
@@ -334,7 +455,7 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
                                 setSelectedIds(prev => prev.filter(i => i !== doc.id));
                               }
                             }}
-                            className="text-slate-300 hover:text-rose-600 p-1 rounded-lg hover:bg-rose-50 transition-colors"
+                            className="text-slate-300 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-colors"
                             title="삭제"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -346,6 +467,89 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Edit Modal */}
+      {editingDoc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-100 max-w-lg w-full p-6 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="text-sm font-bold text-slate-800 flex items-center space-x-2">
+                <Edit3 className="w-4 h-4 text-indigo-600" />
+                <span>서지 정보 직접 수정</span>
+              </h3>
+              <button
+                onClick={() => setEditingDoc(null)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEdit} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">제목 (Title)</label>
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500/20 outline-none"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">저자 (Writer)</label>
+                  <input
+                    type="text"
+                    value={editAuthors}
+                    onChange={(e) => setEditAuthors(e.target.value)}
+                    className="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500/20 outline-none"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">발행연도 (Year)</label>
+                  <input
+                    type="text"
+                    value={editYear}
+                    onChange={(e) => setEditYear(e.target.value)}
+                    className="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500/20 outline-none"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">내용 요약 (Summary)</label>
+                <textarea
+                  value={editSummary}
+                  onChange={(e) => setEditSummary(e.target.value)}
+                  rows={4}
+                  className="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500/20 outline-none leading-relaxed"
+                  required
+                />
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingDoc(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-100"
+                >
+                  취소
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs"
+                >
+                  저장하기
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

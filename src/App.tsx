@@ -173,6 +173,38 @@ export default function App() {
     }
   };
 
+  const handleUpdateDocument = async (updatedDoc: ResearchDocument) => {
+    setDocuments(prev => prev.map(d => d.id === updatedDoc.id ? updatedDoc : d));
+    if (selectedDocForDetail?.id === updatedDoc.id) {
+      setSelectedDocForDetail(updatedDoc);
+    }
+    if (user?.id) {
+      await saveDocumentToSupabase(user.id, updatedDoc);
+    }
+  };
+
+  const handleReanalyzeDocument = async (doc: ResearchDocument) => {
+    try {
+      const res = await fetch('/api/reanalyze-document', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(doc)
+      });
+      if (!res.ok) throw new Error('AI 재분석 실패');
+      const updated = await res.json();
+      const mergedDoc: ResearchDocument = {
+        ...doc,
+        ...updated,
+        id: doc.id
+      };
+      await handleUpdateDocument(mergedDoc);
+      return mergedDoc;
+    } catch (e: any) {
+      console.error("Re-analyze error:", e);
+      throw e;
+    }
+  };
+
   const handleDeleteDocument = async (id: string) => {
     setDocuments(prev => prev.filter(d => d.id !== id));
     if (user?.id) {
@@ -377,6 +409,8 @@ export default function App() {
               onDeleteDocument={handleDeleteDocument}
               onDeleteMultipleDocuments={handleDeleteMultipleDocuments}
               onSelectDocument={(doc) => setSelectedDocForDetail(doc)}
+              onUpdateDocument={handleUpdateDocument}
+              onReanalyzeDocument={handleReanalyzeDocument}
             />
           </div>
         </section>
@@ -410,6 +444,8 @@ export default function App() {
       <DocumentDetailModal
         document={selectedDocForDetail}
         onClose={() => setSelectedDocForDetail(null)}
+        onUpdateDocument={handleUpdateDocument}
+        onReanalyzeDocument={handleReanalyzeDocument}
       />
 
     </div>
