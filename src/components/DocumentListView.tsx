@@ -31,6 +31,7 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
   const [editAuthors, setEditAuthors] = useState('');
   const [editYear, setEditYear] = useState('');
   const [editSummary, setEditSummary] = useState('');
+  const [editKeywordsStr, setEditKeywordsStr] = useState('');
 
   const handleToggleSelect = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -91,17 +92,24 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
     setEditAuthors(doc.authors);
     setEditYear(doc.year);
     setEditSummary(doc.summary);
+    setEditKeywordsStr(doc.keywords ? doc.keywords.join(', ') : '');
   };
 
   const handleSaveEdit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingDoc || !onUpdateDocument) return;
+    const parsedKeywords = editKeywordsStr
+      .split(',')
+      .map(k => k.trim())
+      .filter(Boolean);
+
     const updated: ResearchDocument = {
       ...editingDoc,
       title: editTitle.trim() || editingDoc.title,
       authors: editAuthors.trim() || editingDoc.authors,
       year: editYear.trim() || editingDoc.year,
-      summary: editSummary.trim() || editingDoc.summary
+      summary: editSummary.trim() || editingDoc.summary,
+      keywords: parsedKeywords.length > 0 ? parsedKeywords : editingDoc.keywords
     };
     onUpdateDocument(updated);
     setEditingDoc(null);
@@ -409,13 +417,14 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
                         </p>
                       </td>
                       <td className="py-3.5 px-4">
-                        <div className="flex flex-wrap gap-1 max-w-[200px]">
-                          {doc.keywords.slice(0, 3).map((kw, i) => (
+                        <div className="flex flex-wrap gap-1 max-w-[240px]">
+                          {doc.keywords && doc.keywords.map((kw, i) => (
                             <span
                               key={i}
-                              className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200/60"
+                              className="text-[10px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md border border-slate-200/80 font-medium inline-flex items-center space-x-1"
                             >
-                              {kw}
+                              <Tag className="w-2.5 h-2.5 text-slate-400" />
+                              <span>{kw}</span>
                             </span>
                           ))}
                         </div>
@@ -531,6 +540,17 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
                   rows={4}
                   className="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500/20 outline-none leading-relaxed"
                   required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">핵심 키워드 (쉼표로 구분)</label>
+                <input
+                  type="text"
+                  value={editKeywordsStr}
+                  onChange={(e) => setEditKeywordsStr(e.target.value)}
+                  placeholder="예: 분산 중합, 폴리스티렌, 입자 크기 제어, 고분자 합성"
+                  className="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500/20 outline-none"
                 />
               </div>
 

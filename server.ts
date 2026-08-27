@@ -655,7 +655,7 @@ app.post("/api/reanalyze-document", async (req, res) => {
       const ai = new GoogleGenAI({ apiKey });
       const prompt = `당신은 전 세계 학술 논문 및 특허 문헌 분석 최고 전문가입니다.
 기존 아카이브에 등록된 문서의 정보가 불완전하거나 파일명(예: "${candidateQuery}", "${originalFilename}") 또는 깨진 텍스트로 저장된 상태입니다.
-해당 문서의 실제 정식 서지 정보(공식 Title, 저자 전체 성명 Writer/Authors, 출판 연도 Published Year)와 한국어 상세 요약을 반드시 아래 JSON 형식으로 추출하여 반환하세요.
+해당 문서의 실제 정식 서지 정보(공식 Title, 저자 전체 성명 Writer/Authors, 출판 연도 Published Year)와 상세 요약, 그리고 핵심 연구 키워드를 반드시 아래 JSON 형식으로 추출하여 반환하세요.
 (예: lok1985 -> Canadian Journal of Chemistry 1985년 논문 'Particle size control in dispersion polymerization of polystyrene', 저자: Kar P. Lok, Christopher K. Ober)
 
 [입력 정보]
@@ -671,8 +671,8 @@ ${doiMeta ? `- Crossref 공식 학술 DB 검색 결과:\n  * 제목: ${doiMeta.t
 1. title: 공식 학술 논문 제목 또는 특허 명칭 (절대 '%PDF'나 파일명 확장자 등을 포함하지 말 것)
 2. authors: 저자 전체 성명 목록 (쉼표 구분, 예: "Kar P. Lok, Christopher K. Ober")
 3. year: 출판 또는 발행 연도 4자리 (예: "1985")
-4. summary: **[제목: {title} | 저자: {authors} | 발행연도: {year}년]** 서지 정보를 최상단에 반드시 포함하고, 연구의 목적, 주요 방법론, 핵심 결론을 2~4문장의 명확한 한국어로 작성
-5. keywords: 기술 키워드 3~5개 배열
+4. summary: **[제목: {title} | 저자: {authors} | 발행연도: {year}년]** 서지 정보를 최상단에 반드시 포함하고, 연구의 목적, 주요 방법론, 핵심 결론을 2~4문장의 명확하고 전문적인 한국어로 작성
+5. keywords: 해당 문서의 핵심 기술 및 도메인을 대표하는 고품질 전문 키워드 4~6개 배열 (예: ["분산 중합", "폴리스티렌", "입자 크기 제어", "고분자 화학", "계면활성제"])
 6. type: "${type || 'paper'}"
 7. doi: DOI가 있다면 기재 (예: "10.1139/v85-033" 등, 없으면 null)
 8. journal: 학술지명 또는 출판기관 (예: "Canadian Journal of Chemistry" 등)
@@ -683,7 +683,7 @@ ${doiMeta ? `- Crossref 공식 학술 DB 검색 결과:\n  * 제목: ${doiMeta.t
   "authors": "저자1, 저자2",
   "year": "1985",
   "summary": "[제목: ... | 저자: ... | 발행연도: 1985년] 요약 내용",
-  "keywords": ["키워드1", "키워드2"],
+  "keywords": ["핵심키워드1", "핵심키워드2", "핵심키워드3", "핵심키워드4"],
   "type": "paper",
   "doi": null,
   "journal": "학술지명"

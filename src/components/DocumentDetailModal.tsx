@@ -23,6 +23,7 @@ export const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
   const [editAuthors, setEditAuthors] = useState('');
   const [editYear, setEditYear] = useState('');
   const [editSummary, setEditSummary] = useState('');
+  const [editKeywordsStr, setEditKeywordsStr] = useState('');
 
   React.useEffect(() => {
     if (document) {
@@ -30,6 +31,7 @@ export const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
       setEditAuthors(document.authors);
       setEditYear(document.year);
       setEditSummary(document.summary);
+      setEditKeywordsStr(document.keywords ? document.keywords.join(', ') : '');
       setIsEditing(false);
     }
   }, [document]);
@@ -57,6 +59,7 @@ export const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
         setEditAuthors(updated.authors);
         setEditYear(updated.year);
         setEditSummary(updated.summary);
+        setEditKeywordsStr(updated.keywords ? updated.keywords.join(', ') : '');
       }
     } catch (err: any) {
       alert(`AI 재분석 실패: ${err.message || '오류 발생'}`);
@@ -67,12 +70,18 @@ export const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
 
   const handleSaveEdit = () => {
     if (!onUpdateDocument) return;
+    const parsedKeywords = editKeywordsStr
+      .split(',')
+      .map(k => k.trim())
+      .filter(Boolean);
+
     const updatedDoc: ResearchDocument = {
       ...document,
       title: editTitle.trim() || document.title,
       authors: editAuthors.trim() || document.authors,
       year: editYear.trim() || document.year,
       summary: editSummary.trim() || document.summary,
+      keywords: parsedKeywords.length > 0 ? parsedKeywords : document.keywords
     };
     onUpdateDocument(updatedDoc);
     setIsEditing(false);
@@ -181,6 +190,16 @@ export const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
                   onChange={(e) => setEditSummary(e.target.value)}
                   rows={4}
                   className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-xl outline-none leading-relaxed"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">핵심 키워드 (쉼표로 구분)</label>
+                <input
+                  type="text"
+                  value={editKeywordsStr}
+                  onChange={(e) => setEditKeywordsStr(e.target.value)}
+                  placeholder="예: 분산 중합, 폴리스티렌, 입자 크기 제어, 고분자 합성"
+                  className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-xl outline-none"
                 />
               </div>
               <div className="flex justify-end space-x-2 pt-1">
