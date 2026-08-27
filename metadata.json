@@ -1,0 +1,6 @@
+{
+  "name": "연구 및 특허 문서 라이브러리",
+  "description": "발행연도, 제목, 저자, 내용요약, 키워드를 한눈에 관리하고 탐색하는 연구 논문 및 특허 정리 플랫폼",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
