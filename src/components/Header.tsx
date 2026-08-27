@@ -1,5 +1,5 @@
 import React from 'react';
-import { FolderOpen, Plus, Search, BookOpen } from 'lucide-react';
+import { FolderOpen, Plus, Search, BookOpen, LogOut, User as UserIcon } from 'lucide-react';
 import { FolderConfig } from '../types';
 
 interface HeaderProps {
@@ -9,6 +9,8 @@ interface HeaderProps {
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   totalCount: number;
+  user?: any;
+  onLogout?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -17,7 +19,9 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAddModal,
   searchQuery,
   setSearchQuery,
-  totalCount
+  totalCount,
+  user,
+  onLogout
 }) => {
   return (
     <header className="h-16 px-6 bg-white border-b border-slate-200 flex items-center justify-between shadow-xs shrink-0 z-30">
@@ -62,6 +66,24 @@ export const Header: React.FC<HeaderProps> = ({
           <Plus className="w-4 h-4" />
           <span>문서 추가 / AI 분석</span>
         </button>
+
+        {user && (
+          <div className="flex items-center gap-2 ml-2 pl-2 border-l border-slate-200">
+            <div className="hidden md:flex items-center gap-1.5 text-xs text-slate-600 bg-slate-100 px-3 py-1.5 rounded-full">
+              <UserIcon className="w-3.5 h-3.5 text-indigo-600" />
+              <span className="truncate max-w-[120px] font-medium">{user.email}</span>
+            </div>
+            {onLogout && (
+              <button
+                onClick={onLogout}
+                className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-full transition-colors"
+                title="로그아웃 (Supabase Auth)"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </header>
   );

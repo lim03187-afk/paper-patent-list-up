@@ -9,11 +9,16 @@ import { FolderConfigModal } from './components/FolderConfigModal';
 import { AddDocumentModal } from './components/AddDocumentModal';
 import { DocumentListView } from './components/DocumentListView';
 import { DocumentDetailModal } from './components/DocumentDetailModal';
+import { LoginScreen } from './components/LoginScreen';
 import { ResearchDocument, FolderConfig, DocType } from './types';
 import { INITIAL_DOCUMENTS, DEFAULT_FOLDER } from './data/initialData';
-import { LayoutGrid, List } from 'lucide-react';
+import { LayoutGrid, List, Loader2 } from 'lucide-react';
+import { getSupabaseClient } from './lib/supabase';
 
 export default function App() {
+  const [user, setUser] = useState<any>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
   const [documents, setDocuments] = useState<ResearchDocument[]>(() => {
     const saved = localStorage.getItem('research_vault_docs');
     if (saved) {
@@ -37,6 +42,45 @@ export default function App() {
     }
     return DEFAULT_FOLDER;
   });
+
+  // Check Supabase Auth session on mount
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session?.user) {
+            setUser(session.user);
+          }
+          const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+            setUser(session?.user || null);
+          });
+          setAuthLoading(false);
+          return () => {
+            subscription.unsubscribe();
+          };
+        }
+      } catch (err) {
+        console.error("Auth session check error:", err);
+      } finally {
+        setAuthLoading(false);
+      }
+    };
+    checkSession();
+  }, []);
+
+  const handleLogout = async () => {
+    try {
+      const supabase = getSupabaseClient();
+      if (supabase) {
+        await supabase.auth.signOut();
+      }
+    } catch (e) {
+      console.error("Logout error:", e);
+    }
+    setUser(null);
+  };
 
   // Filter & Search states
   const [searchQuery, setSearchQuery] = useState('');
@@ -101,10 +145,26 @@ export default function App() {
     localStorage.removeItem('research_vault_folder');
   };
 
+  if (authLoading) {
+    return (
+      <div className="h-screen bg-slate-900 flex items-center justify-center text-white">
+        <div className="flex items-center space-x-3">
+          <Loader2 className="w-6 h-6 animate-spin text-indigo-400" />
+          <span className="text-sm font-medium">Supabase 인증 상태 확인 중...</span>
+        </div>
+      </div>
+    );
+  }
+
+  // If not logged in, show LoginScreen
+  if (!user) {
+    return <LoginScreen onLoginSuccess={(loggedInUser) => setUser(loggedInUser)} />;
+  }
+
   return (
     <div className="h-screen bg-[#F7F9FC] text-slate-700 flex flex-col font-sans overflow-hidden">
       
-      {/* Top Header with Embedded Search */}
+      {/* Top Header with Embedded Search & Supabase User Info */}
       <Header
         folder={folder}
         onOpenFolderModal={() => setIsFolderModalOpen(true)}
@@ -112,6 +172,8 @@ export default function App() {
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
         totalCount={totalCount}
+        user={user}
+        onLogout={handleLogout}
       />
 
       {/* Main Container with Sidebar */}
@@ -256,7 +318,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="h-8 bg-white border-t border-slate-200 px-6 flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-tighter shrink-0">
-        <div>System Status: Ready • Connected to ResearchDB_Node_01</div>
+        <div>System Status: Ready • Supabase Auth Active ({user.email})</div>
         <div>Layout: High Density View • Single Iframe Mode</div>
       </footer>
 
