@@ -40,6 +40,47 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
 
   if (!isOpen) return null;
 
+  // Client-side fallback text extractor
+  const extractClientText = async (file: File): Promise<string> => {
+    try {
+      const text = await file.text();
+      if (text && text.trim().length > 10) {
+        return text;
+      }
+    } catch {}
+    return file.name.replace(/\.[^/.]+$/, "");
+  };
+
+  // Client-side Crossref lookup
+  const queryCrossrefClient = async (query: string): Promise<any | null> => {
+    try {
+      const clean = query.replace(/\.(pdf|txt|md|docx?)$/i, '').replace(/[-_]/g, ' ').trim();
+      if (clean.length < 3) return null;
+      const url = `https://api.crossref.org/works?query.title=${encodeURIComponent(clean)}&rows=1`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
+      if (res.ok) {
+        const data = await res.json();
+        const item = data.message?.items?.[0];
+        if (item && item.title?.[0]) {
+          const title = item.title[0];
+          const authors = (item.author || []).map((a: any) => [a.given, a.family].filter(Boolean).join(' ') || a.name || '').filter(Boolean).join(', ');
+          let year = '';
+          if (item.issued?.['date-parts']?.[0]?.[0]) year = String(item.issued['date-parts'][0][0]);
+          else if (item.created?.['date-parts']?.[0]?.[0]) year = String(item.created['date-parts'][0][0]);
+          return {
+            title: title || clean,
+            authors: authors || '저자 미상',
+            year: year || new Date().getFullYear().toString(),
+            doi: item.DOI,
+            journal: item['container-title']?.[0],
+            url: item.URL || (item.DOI ? `https://doi.org/${item.DOI}` : undefined)
+          };
+        }
+      }
+    } catch {}
+    return null;
+  };
+
   const handleFileUploadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedFiles.length === 0) return;
@@ -48,31 +89,69 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
     setErrorMsg('');
 
     try {
-      const formData = new FormData();
-      selectedFiles.forEach(file => {
-        formData.append('files', file);
-      });
+      let docsToAdd: any[] = [];
+      let usedServer = false;
 
-      const res = await fetch('/api/upload-and-analyze', {
-        method: 'POST',
-        body: formData
-      });
+      // 1. Try server analysis first
+      try {
+        const formData = new FormData();
+        selectedFiles.forEach(file => {
+          formData.append('files', file);
+        });
 
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || `서버 분석 실패 (상태 코드: ${res.status})`);
+        const res = await fetch('/api/upload-and-analyze', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (res.ok) {
+          const json = await res.json();
+          if (json.documents && Array.isArray(json.documents)) {
+            docsToAdd = json.documents;
+            usedServer = true;
+          }
+        }
+      } catch (serverErr) {
+        console.warn("Server upload-and-analyze notice, falling back to client processing:", serverErr);
       }
 
-      const json = await res.json();
-      if (!json.documents || !Array.isArray(json.documents)) {
-        throw new Error('문서 분석 결과를 받아오지 못했습니다.');
-      }
+      // 2. If server was unavailable (e.g. 404, network error), process smoothly in client
+      if (!usedServer || docsToAdd.length === 0) {
+        for (let idx = 0; idx < selectedFiles.length; idx++) {
+          const fileObj = selectedFiles[idx];
+          const cleanName = fileObj.name.replace(/\.[^/.]+$/, "");
+          const isPatent = cleanName.toLowerCase().includes("patent") || cleanName.toLowerCase().includes("특허") || cleanName.toLowerCase().includes("출원");
+          const extractedText = await extractClientText(fileObj);
 
-      const docsToAdd = json.documents;
+          // Check Crossref directly from browser
+          const crossrefMeta = await queryCrossrefClient(cleanName);
+
+          const lines = extractedText.split('\n').map(l => l.trim()).filter(Boolean);
+          const rawTitle = crossrefMeta?.title || (lines[0] && lines[0].length < 150 ? lines[0] : cleanName);
+          const rawAuthors = crossrefMeta?.authors || (lines[1] && lines[1].length < 80 ? lines[1] : '저자 미상');
+          
+          const yearMatch = (cleanName + ' ' + extractedText).match(/\b(19\d\d|20\d\d)\b/);
+          const rawYear = crossrefMeta?.year || (yearMatch ? yearMatch[1] : new Date().getFullYear().toString());
+
+          const rawSummary = `[제목: ${rawTitle} | 저자: ${rawAuthors} | 발행연도: ${rawYear}년] ${fileObj.name} 파일에서 추출된 연구 자료입니다.`;
+
+          docsToAdd.push({
+            title: rawTitle,
+            authors: rawAuthors,
+            year: rawYear,
+            summary: rawSummary,
+            keywords: [isPatent ? '특허' : '학술연구', '문헌분석'],
+            type: isPatent ? 'patent' : 'paper',
+            fileUrl: crossrefMeta?.url || URL.createObjectURL(fileObj),
+            doi: crossrefMeta?.doi,
+            journal: crossrefMeta?.journal
+          });
+        }
+      }
 
       let addedCount = 0;
       docsToAdd.forEach((parsedDoc: any, idx: number) => {
-        const fileObj = selectedFiles[idx];
+        const fileObj = selectedFiles[idx] || selectedFiles[0];
         const localUrl = fileObj ? URL.createObjectURL(fileObj) : 'https://arxiv.org/';
         const docTitle = parsedDoc.title || fileObj?.name || '문서 제목';
 
@@ -135,14 +214,41 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
     setErrorMsg('');
 
     try {
-      const res = await fetch('/api/analyze-document', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rawText, fileType: aiDocType })
-      });
+      let data: any = null;
+      try {
+        const res = await fetch('/api/analyze-document', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rawText, fileType: aiDocType })
+        });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || '분석 중 오류 발생');
+        if (res.ok) {
+          data = await res.json();
+        }
+      } catch (serverErr) {
+        console.warn("Server analyze notice, falling back to client extraction:", serverErr);
+      }
+
+      if (!data) {
+        const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+        const candidateTitle = lines[0]?.slice(0, 150) || '연구 분석 문서';
+        const candidateAuthors = lines[1]?.slice(0, 80) || '연구자';
+        const yearMatch = rawText.match(/\b(19\d\d|20\d\d)\b/);
+        const candidateYear = yearMatch ? yearMatch[1] : new Date().getFullYear().toString();
+        const crossrefMeta = await queryCrossrefClient(candidateTitle);
+
+        data = {
+          title: crossrefMeta?.title || candidateTitle,
+          authors: crossrefMeta?.authors || candidateAuthors,
+          year: crossrefMeta?.year || candidateYear,
+          summary: lines.slice(2, 6).join(' ').slice(0, 300) || rawText.slice(0, 200),
+          keywords: ['연구자료', aiDocType === 'patent' ? '특허' : '학술논문'],
+          type: aiDocType,
+          doi: crossrefMeta?.doi,
+          fileUrl: crossrefMeta?.url || 'https://arxiv.org/',
+          journal: crossrefMeta?.journal
+        };
+      }
 
       const docTitle = data.title || '제목 없음';
       const isDuplicate = existingDocuments.some(

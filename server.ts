@@ -401,6 +401,12 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
   }
 });
 
+// Route alias
+app.post("/upload-and-analyze", upload.array("files"), (req, res, next) => {
+  req.url = "/api/upload-and-analyze";
+  (app as any)(req, res, next);
+});
+
 // API endpoint to analyze paper/patent text using Gemini AI & DOI Lookup
 app.post("/api/analyze-document", async (req, res) => {
   const { rawText, fileType } = req.body;
