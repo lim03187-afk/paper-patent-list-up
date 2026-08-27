@@ -131,10 +131,12 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
           summary: parsedDoc.summary || '내용 요약 없음',
           keywords: Array.isArray(parsedDoc.keywords) ? parsedDoc.keywords : ['연구자료'],
           type: parsedDoc.type === 'patent' ? 'patent' : 'paper',
-          fileUrl: localUrl,
+          fileUrl: parsedDoc.fileUrl || localUrl,
           folderPath: currentFolderPath,
           createdAt: new Date().toISOString().split('T')[0],
-          citationCount: 1
+          citationCount: 1,
+          doi: parsedDoc.doi || undefined,
+          journal: parsedDoc.journal || undefined
         };
 
         onAddDocument(newDoc);
@@ -190,10 +192,12 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
         summary: data.summary || rawText.slice(0, 200),
         keywords: Array.isArray(data.keywords) ? data.keywords : ['연구', '신규문서'],
         type: data.type === 'patent' ? 'patent' : 'paper',
-        fileUrl: data.fileUrl || 'https://arxiv.org/',
+        fileUrl: data.fileUrl || (data.doi ? `https://doi.org/${data.doi}` : 'https://arxiv.org/'),
         folderPath: currentFolderPath,
         createdAt: new Date().toISOString().split('T')[0],
-        citationCount: 1
+        citationCount: 1,
+        doi: data.doi || undefined,
+        journal: data.journal || undefined
       };
 
       onAddDocument(newDoc);

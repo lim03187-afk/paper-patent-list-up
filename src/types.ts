@@ -12,6 +12,8 @@ export interface ResearchDocument {
   folderPath: string;
   createdAt: string;
   citationCount?: number;
+  doi?: string;
+  journal?: string;
 }
 
 export interface FolderConfig {

@@ -120,6 +120,11 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
                         <Calendar className="w-3 h-3 text-slate-400" />
                         <span>{doc.year}</span>
                       </span>
+                      {doc.doi && (
+                        <span className="inline-flex items-center text-[10px] font-semibold text-indigo-700 bg-indigo-50/80 px-2 py-0.5 rounded border border-indigo-200" title={`DOI: ${doc.doi}`}>
+                          DOI 등록
+                        </span>
+                      )}
                     </div>
 
                     {/* Delete button */}
@@ -275,6 +280,13 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
                         >
                           {doc.title}
                         </button>
+                        {doc.doi && (
+                          <div className="mt-0.5">
+                            <span className="inline-flex items-center text-[10px] text-indigo-600 font-mono">
+                              DOI: {doc.doi}
+                            </span>
+                          </div>
+                        )}
                       </td>
                       <td className="py-3.5 px-4 text-slate-600">
                         <div className="line-clamp-1" title={doc.authors}>

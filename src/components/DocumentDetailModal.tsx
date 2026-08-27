@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, FileText, Shield, Calendar, Users, Tag, ExternalLink, HardDrive, Copy, Check } from 'lucide-react';
+import { X, FileText, Shield, Calendar, Users, Tag, ExternalLink, HardDrive, Copy, Check, Globe, BookOpen } from 'lucide-react';
 import { ResearchDocument } from '../types';
 
 interface DocumentDetailModalProps {
@@ -16,9 +16,11 @@ export const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
   if (!document) return null;
 
   const isPatent = document.type === 'patent';
+  const doiUrl = document.doi ? (document.doi.startsWith('http') ? document.doi : `https://doi.org/${document.doi}`) : null;
 
   const handleCopyCitation = () => {
-    const citation = `${document.authors} (${document.year}). "${document.title}". ${isPatent ? 'Patent.' : 'Research Paper.'} Link: ${document.fileUrl}`;
+    const doiPart = document.doi ? ` DOI: https://doi.org/${document.doi}` : '';
+    const citation = `${document.authors} (${document.year}). "${document.title}". ${isPatent ? 'Patent.' : (document.journal ? `${document.journal}.` : 'Research Paper.')}${doiPart} Link: ${document.fileUrl}`;
     navigator.clipboard.writeText(citation);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -30,7 +32,7 @@ export const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
         
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/70">
-          <div className="flex items-center space-x-2.5">
+          <div className="flex items-center space-x-2.5 flex-wrap gap-y-1">
             <span
               className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-xs font-semibold ${
                 isPatent
@@ -44,6 +46,12 @@ export const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
             <span className="text-xs font-medium text-slate-500 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
               {document.year}년 발행
             </span>
+            {document.doi && (
+              <span className="text-xs font-medium text-indigo-700 bg-indigo-50/70 px-2.5 py-1 rounded-lg border border-indigo-200 flex items-center space-x-1">
+                <Globe className="w-3 h-3 text-indigo-500" />
+                <span>DOI: {document.doi}</span>
+              </span>
+            )}
           </div>
           <button
             onClick={onClose}
@@ -60,6 +68,12 @@ export const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
             <h2 className="text-lg font-bold text-slate-900 leading-snug">
               {document.title}
             </h2>
+            {document.journal && (
+              <div className="flex items-center space-x-1.5 text-xs text-indigo-600 font-medium mt-1">
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>{document.journal}</span>
+              </div>
+            )}
           </div>
 
           {/* Authors */}
@@ -72,6 +86,28 @@ export const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
               <span>{document.authors}</span>
             </div>
           </div>
+
+          {/* DOI Direct Web Link Box */}
+          {doiUrl && (
+            <div className="bg-indigo-50/30 border border-indigo-100 rounded-xl p-3.5 flex items-center justify-between">
+              <div className="flex items-center space-x-2 text-xs">
+                <Globe className="w-4 h-4 text-indigo-600 shrink-0" />
+                <div className="truncate">
+                  <span className="font-semibold text-slate-700 mr-2">공식 DOI 웹페이지:</span>
+                  <span className="font-mono text-indigo-600">{doiUrl}</span>
+                </div>
+              </div>
+              <a
+                href={doiUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 flex items-center space-x-1 px-3 py-1 bg-white hover:bg-indigo-50 text-indigo-600 border border-indigo-200 rounded-lg text-xs font-medium transition-colors shadow-2xs"
+              >
+                <span>사이트 이동</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+          )}
 
           {/* Summary */}
           <div>
@@ -133,12 +169,12 @@ export const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
               닫기
             </button>
             <a
-              href={document.fileUrl}
+              href={doiUrl || document.fileUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center space-x-1.5 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-medium transition-colors shadow-xs"
             >
-              <span>파일 열기</span>
+              <span>{doiUrl ? 'DOI 원문 사이트 열기' : '파일 열기'}</span>
               <ExternalLink className="w-3.5 h-3.5" />
             </a>
           </div>
