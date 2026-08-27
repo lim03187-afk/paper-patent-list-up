@@ -53,13 +53,19 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
       if (apiKey && extractedText.trim()) {
         try {
           const ai = new GoogleGenAI({ apiKey });
-          const prompt = `다음 첨부된 문서의 내용 일부를 분석하여 JSON 형식으로 정확히 추출해주세요.
+          const prompt = `다음 문서 텍스트(논문 또는 특허)를 분석하여 아래 규칙에 맞춰 JSON 형식으로 추출해주세요.
+- 규칙: 
+  1. 보통 문서의 첫 줄이나 상단 표제부가 제목(title)입니다.
+  2. 두 번째 줄이나 상단 저자 표기 부근이 저자(authors)입니다.
+  3. 문서 도입부/초록의 첫 문단이 핵심 요약(summary)입니다.
+  4. 문서 성격에 따라 논문(paper)인지 특허(patent)인지 정확히 분류(type: "paper" 또는 "patent")해주세요.
+
 반드시 아래 JSON 포맷으로만 응답하세요 (마크다운 백틱 없이 순수 JSON 객체만):
 {
-  "title": "문서의 실제 논문 또는 특허 제목",
-  "authors": "저자 이름들 (쉼표로 구분, 예: 홍길동, 김철수)",
+  "title": "추출된 제목",
+  "authors": "추출된 저자 (쉼표로 구분)",
   "year": "발행 연도 (예: 2026)",
-  "summary": "핵심 내용 요약 (3~4문장 내외, 한국어)",
+  "summary": "첫 번째 문단 기반의 핵심 내용 요약 (한국어)",
   "keywords": ["키워드1", "키워드2", "키워드3"],
   "type": "paper 또는 patent"
 }
@@ -114,24 +120,25 @@ ${extractedText.slice(0, 4000)}`;
 
 // API endpoint to analyze paper/patent text using Gemini AI
 app.post("/api/analyze-document", async (req, res) => {
-  try {
-    const { rawText, fileType } = req.body;
-    if (!rawText) {
-      return res.status(400).json({ error: "rawText is required" });
-    }
+  const { rawText, fileType } = req.body;
+  if (!rawText) {
+    return res.status(400).json({ error: "rawText is required" });
+  }
 
+  const fallbackResult = {
+    title: rawText.split('\n')[0]?.slice(0, 50) || "연구 분석 문서",
+    authors: "로컬 연구자",
+    year: new Date().getFullYear().toString(),
+    summary: rawText.slice(0, 200) + "...",
+    keywords: ["연구자료", "분석문서", fileType === 'patent' ? "특허" : "학술논문"],
+    type: fileType || "paper",
+    fileUrl: "https://arxiv.org/"
+  };
+
+  try {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      // Fallback if key is missing
-      return res.json({
-        title: "자동 분석된 문서 제목",
-        authors: "미상 저자",
-        year: new Date().getFullYear().toString(),
-        summary: rawText.slice(0, 150) + "...",
-        keywords: ["연구", "분석", "문서"],
-        type: fileType || "paper",
-        fileUrl: "https://arxiv.org/"
-      });
+      return res.json(fallbackResult);
     }
 
     const ai = new GoogleGenAI({ apiKey });
@@ -142,7 +149,7 @@ app.post("/api/analyze-document", async (req, res) => {
 {
   "title": "문서 제목",
   "authors": "저자 이름들 (쉼표로 구분)",
-  "year": "발행 연도 (예: 2024)",
+  "year": "발행 연도 (예: 2026)",
   "summary": "핵심 내용 요약 (3~4문장 내외, 한국어)",
   "keywords": ["키워드1", "키워드2", "키워드3"],
   "type": "${fileType || 'paper'}",
@@ -154,13 +161,18 @@ ${rawText}`,
     });
 
     const text = response.text ? response.text.trim() : "";
-    // Clean markdown code blocks if any
-    const cleanJson = text.replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/\s*```$/, "");
-    const parsed = JSON.parse(cleanJson);
-    res.json(parsed);
+    if (text) {
+      const cleanJson = text.replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/\s*```$/, "");
+      const parsed = JSON.parse(cleanJson);
+      return res.json({
+        ...fallbackResult,
+        ...parsed
+      });
+    }
+    return res.json(fallbackResult);
   } catch (error: any) {
-    console.error("Gemini analysis error:", error);
-    res.status(500).json({ error: error.message || "문서 분석 중 오류가 발생했습니다." });
+    console.error("Gemini analysis quota/error (using fallback):", error);
+    return res.json(fallbackResult);
   }
 });
 

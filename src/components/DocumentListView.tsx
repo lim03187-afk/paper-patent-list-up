@@ -131,7 +131,7 @@ export const DocumentListView: React.FC<DocumentListViewProps> = ({
                           setSelectedIds(prev => prev.filter(i => i !== doc.id));
                         }
                       }}
-                      className="text-slate-300 hover:text-rose-600 p-1 rounded-lg hover:bg-rose-50 transition-colors opacity-0 group-hover:opacity-100"
+                      className="text-slate-400 hover:text-rose-600 p-1 rounded-lg hover:bg-rose-50 transition-colors"
                       title="문서 삭제"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
