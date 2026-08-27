@@ -223,6 +223,7 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
     const results = [];
 
     for (const file of files) {
+      const isPdf = file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf");
       const cleanName = file.originalname.replace(/\.[^/.]+$/, "");
       const isPatent = cleanName.toLowerCase().includes("patent") || cleanName.toLowerCase().includes("특허") || cleanName.toLowerCase().includes("출원");
       
@@ -267,48 +268,63 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
         journal: doiMeta?.containerTitle
       };
 
-      if (apiKey && extractedText.trim()) {
+      if (apiKey) {
         try {
           const ai = new GoogleGenAI({ apiKey });
-          const prompt = `당신은 전 세계 학술 논문 및 특허 문헌 분석 전문가입니다.
-아래 문서의 내용을 정밀하게 분석하여 다음 정보들을 정확하게 JSON 형식으로 추출해주세요.
+          const promptInstructions = `당신은 전 세계 학술 논문 및 특허 문헌 분석 최고 전문가입니다.
+주어진 파일(${file.originalname})의 내용을 정밀 분석하여 학술 서지 정보(Title, Writer/Authors, Published Year)와 요약을 반드시 아래 JSON 형식으로 추출하세요.
 
-[추출 규칙]
-1. title: 문서의 정확한 논문 제목 또는 특허 명칭. 상단에 번호(209 등)나 다운로드 문구, 저널 표기가 있다면 제거하고 실제 연구 제목만 추출하세요. (DOI 조회 정보: "${doiMeta?.title || ''}")
-2. authors: 저자명 전체를 쉼표로 연결한 문자열 (예: "Kar P. Lok, Christopher K. Ober")
-3. year: 출판 또는 발행 연도 4자리 (예: "1985")
-4. summary: 초록(Abstract) 또는 본문 도입부의 핵심 연구 내용을 한국어로 자연스럽고 명확하게 2~3문장으로 요약
-5. keywords: 기술 키워드 3~5개 배열
+[필수 추출 규칙]
+1. title: 문서의 공식 논문 제목 또는 특허 명칭. (상단 머리말, 페이지 번호, 다운로드 문구 등은 제외하고 실제 연구 제목만 추출)
+2. authors: 저자 전체 성명 목록 (쉼표로 구분, 예: "Kar P. Lok, Christopher K. Ober")
+3. year: 출판 또는 발행 연도 4자리 숫자 (예: "1985")
+4. summary: **[제목: {title} | 저자: {authors} | 발행: {year}년]** 서지 표기를 요약 첫 줄에 포함하고, 연구의 목적, 핵심 분석 내용, 도출된 결론을 2~4문장으로 명확하게 한국어로 작성
+5. keywords: 문서의 핵심 기술 키워드 3~5개 배열
 6. type: "${isPatent ? 'patent' : 'paper'}"
 7. doi: 본문에 기재된 DOI (예: 10.xxxx/...)가 있다면 추출 (없으면 null)
 8. journal: 학술지명 또는 출판기관 (예: "Canadian Journal of Chemistry" 등)
 
 반드시 마크다운 백틱 없이 순수 JSON 객체만 응답하세요:
 {
-  "title": "논문 제목",
+  "title": "정확한 논문/특허 제목",
   "authors": "저자1, 저자2",
   "year": "1985",
-  "summary": "한국어 핵심 요약",
+  "summary": "핵심 내용 요약 (한국어)",
   "keywords": ["키워드1", "키워드2"],
   "type": "paper",
   "doi": null,
   "journal": "학술지명"
-}
+}`;
 
-문서 내용 발췌:
-${extractedText.slice(0, 5000)}`;
+          let contents: any[] = [];
+          if (isPdf && file.buffer && file.buffer.length > 0) {
+            // Provide base64 PDF directly for vision/layout extraction
+            contents = [
+              {
+                inlineData: {
+                  mimeType: "application/pdf",
+                  data: file.buffer.toString("base64")
+                }
+              },
+              { text: promptInstructions }
+            ];
+          } else {
+            contents = [
+              { text: promptInstructions + "\n\n문서 내용:\n" + (extractedText.slice(0, 5000) || cleanName) }
+            ];
+          }
 
           let response: any = null;
           try {
             response = await ai.models.generateContent({
               model: "gemini-3.5-flash-lite",
-              contents: prompt,
+              contents: contents,
             });
           } catch (modelErr) {
-            console.log("gemini-3.5-flash-lite fallback to gemini-3.6-flash");
+            console.log("gemini-3.5-flash-lite retry with gemini-3.6-flash");
             response = await ai.models.generateContent({
               model: "gemini-3.6-flash",
-              contents: prompt,
+              contents: contents,
             });
           }
 
@@ -339,11 +355,17 @@ ${extractedText.slice(0, 5000)}`;
               doiMeta?.year || parsed.year || analysisResult.year
             );
 
+            // Construct rich summary guaranteeing title, writer, and published year are highlighted
+            let finalSummary = parsed.summary || analysisResult.summary;
+            if (!finalSummary.includes(cleanAuthors) && cleanAuthors !== "저자 미상") {
+              finalSummary = `[저자: ${cleanAuthors} (${cleanYear})] ${finalSummary}`;
+            }
+
             analysisResult = {
               title: cleanTitle,
               authors: cleanAuthors,
               year: cleanYear,
-              summary: parsed.summary || analysisResult.summary,
+              summary: finalSummary,
               keywords: Array.isArray(parsed.keywords) && parsed.keywords.length > 0 ? parsed.keywords : analysisResult.keywords,
               type: parsed.type === 'patent' ? 'patent' : 'paper',
               doi: doiMeta?.doi || parsed.doi || analysisResult.doi,
@@ -485,12 +507,18 @@ ${rawText.slice(0, 5000)}`;
         doiMeta?.year || parsed.year || fallbackResult.year
       );
 
+      let finalSummary = parsed.summary || fallbackResult.summary;
+      if (!finalSummary.includes(cleanAuthors) && cleanAuthors !== "저자 미상") {
+        finalSummary = `[저자: ${cleanAuthors} (${cleanYear})] ${finalSummary}`;
+      }
+
       return res.json({
         ...fallbackResult,
         ...parsed,
         title: cleanTitle,
         authors: cleanAuthors,
         year: cleanYear,
+        summary: finalSummary,
         doi: doiMeta?.doi || parsed.doi || fallbackResult.doi,
         fileUrl: doiMeta?.url || parsed.fileUrl || fallbackResult.fileUrl,
         journal: doiMeta?.containerTitle || parsed.journal || fallbackResult.journal

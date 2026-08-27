@@ -53,59 +53,22 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
         formData.append('files', file);
       });
 
-      let data: any = null;
-      try {
-        const res = await fetch('/api/upload-and-analyze', {
-          method: 'POST',
-          body: formData
-        });
+      const res = await fetch('/api/upload-and-analyze', {
+        method: 'POST',
+        body: formData
+      });
 
-        const contentType = res.headers.get("content-type");
-        if (contentType && contentType.includes("application/json")) {
-          const json = await res.json();
-          if (res.ok && json.documents) {
-            data = json;
-          }
-        }
-      } catch (networkErr) {
-        console.warn("Server API fetch warning, switching to client-side parser:", networkErr);
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `서버 분석 실패 (상태 코드: ${res.status})`);
       }
 
-      // If server returned valid documents, use them; otherwise, execute robust client-side extraction
-      let docsToAdd: any[] = [];
-      if (data && data.documents && Array.isArray(data.documents)) {
-        docsToAdd = data.documents;
-      } else {
-        // Client-side parser fallback for each file
-        for (let i = 0; i < selectedFiles.length; i++) {
-          const fileObj = selectedFiles[i];
-          const cleanName = fileObj.name.replace(/\.[^/.]+$/, "");
-          const isPatent = cleanName.toLowerCase().includes("patent") || cleanName.toLowerCase().includes("특허") || cleanName.toLowerCase().includes("출원");
-          
-          let fileContent = "";
-          try {
-            if (fileObj.type.startsWith("text/") || fileObj.name.endsWith(".txt") || fileObj.name.endsWith(".md")) {
-              fileContent = await fileObj.text();
-            }
-          } catch (readErr) {
-            console.log("Client file read:", readErr);
-          }
-
-          const lines = fileContent.split('\n').map(l => l.trim()).filter(Boolean);
-          const parsedTitle = lines[0]?.slice(0, 100) || cleanName;
-          const parsedAuthors = lines[1]?.slice(0, 80) || "연구자";
-          const parsedSummary = lines.slice(2, 5).join(' ').slice(0, 250) || `${fileObj.name} 파일이 아카이브에 성공적으로 추가되었습니다.`;
-
-          docsToAdd.push({
-            title: parsedTitle,
-            authors: parsedAuthors,
-            year: new Date().getFullYear().toString(),
-            summary: parsedSummary,
-            keywords: [isPatent ? "특허" : "학술논문", "로컬문서"],
-            type: isPatent ? "patent" : "paper"
-          });
-        }
+      const json = await res.json();
+      if (!json.documents || !Array.isArray(json.documents)) {
+        throw new Error('문서 분석 결과를 받아오지 못했습니다.');
       }
+
+      const docsToAdd = json.documents;
 
       let addedCount = 0;
       docsToAdd.forEach((parsedDoc: any, idx: number) => {
