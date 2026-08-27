@@ -6,7 +6,8 @@ import multer from "multer";
 import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
-const pdfParse = require("pdf-parse");
+const pdfParseLib = require("pdf-parse");
+const pdfParse = typeof pdfParseLib === 'function' ? pdfParseLib : (pdfParseLib.default || pdfParseLib);
 
 const app = express();
 const PORT = 3000;
@@ -32,8 +33,12 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
       let extractedText = "";
       try {
         if (file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf")) {
-          const pdfData = await pdfParse(file.buffer);
-          extractedText = pdfData.text || "";
+          if (typeof pdfParse === 'function') {
+            const pdfData = await pdfParse(file.buffer);
+            extractedText = pdfData.text || "";
+          } else {
+            extractedText = file.buffer.toString("utf-8");
+          }
         } else if (file.mimetype.startsWith("text/") || file.originalname.toLowerCase().endsWith(".txt") || file.originalname.toLowerCase().endsWith(".md")) {
           extractedText = file.buffer.toString("utf-8");
         }
