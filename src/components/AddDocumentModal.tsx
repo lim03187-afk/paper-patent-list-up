@@ -56,6 +56,12 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
         body: formData
       });
 
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await res.text();
+        throw new Error(text.includes("<!DOCTYPE") || text.includes("<html") ? "서버 응답 오류 (HTML 페이지가 반환되었습니다). 잠시 후 다시 시도해주세요." : (text || "서버 통신 오류가 발생했습니다."));
+      }
+
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '파일 업로드 중 오류 발생');
 

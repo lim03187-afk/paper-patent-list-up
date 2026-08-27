@@ -15,20 +15,23 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
   try {
     const files = req.files as Express.Multer.File[];
     if (!files || files.length === 0) {
-      return res.status(400).json({ error: "No files uploaded" });
+      return res.status(400).json({ error: "업로드된 파일이 없습니다." });
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
     const results = [];
 
     for (const file of files) {
+      const cleanName = file.originalname.replace(/\.[^/.]+$/, "");
+      const isPatent = cleanName.toLowerCase().includes("patent") || cleanName.toLowerCase().includes("특허") || cleanName.toLowerCase().includes("출원");
+      
       let analysisResult = {
-        title: file.originalname.replace(/\.[^/.]+$/, ""),
-        authors: "로컬 업로드 저자",
+        title: cleanName,
+        authors: "로컬 연구자",
         year: new Date().getFullYear().toString(),
-        summary: `${file.originalname} 파일이 성공적으로 업로드 및 아카이브되었습니다.`,
-        keywords: ["로컬문서", "연구자료"],
-        type: file.originalname.toLowerCase().includes("patent") || file.originalname.toLowerCase().includes("특허") ? "patent" : "paper"
+        summary: `${file.originalname} 파일이 성공적으로 업로드 및 아카이브되었습니다. 첨부된 문서를 기반으로 연구 아카이브가 생성되었습니다.`,
+        keywords: [isPatent ? "특허" : "학술논문", "로컬문서", "연구자료"],
+        type: isPatent ? "patent" : "paper" as const
       };
 
       if (apiKey) {
@@ -36,13 +39,17 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
           const ai = new GoogleGenAI({ apiKey });
           
           let filePart: any = null;
-          if (file.mimetype === "application/pdf" || file.mimetype.startsWith("text/") || file.mimetype === "application/msword" || file.mimetype.includes("document")) {
-            filePart = {
-              inlineData: {
-                mimeType: file.mimetype === "text/plain" ? "text/plain" : (file.mimetype === "application/pdf" ? "application/pdf" : "text/plain"),
-                data: file.buffer.toString("base64")
-              }
-            };
+          if (file.mimetype === "application/pdf" || file.mimetype.startsWith("text/") || file.mimetype.includes("document") || file.buffer) {
+            try {
+              filePart = {
+                inlineData: {
+                  mimeType: file.mimetype === "application/pdf" ? "application/pdf" : (file.mimetype.startsWith("text/") ? "text/plain" : "application/pdf"),
+                  data: file.buffer.toString("base64")
+                }
+              };
+            } catch (bufErr) {
+              console.error("Buffer conversion error:", bufErr);
+            }
           }
 
           const prompt = `다음 첨부된 파일(${file.originalname})의 내용을 분석하여 JSON 형식으로 정확히 추출해주세요.
@@ -64,19 +71,22 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
           });
 
           const text = response.text ? response.text.trim() : "";
-          const cleanJson = text.replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/\s*```$/, "");
-          const parsed = JSON.parse(cleanJson);
-          
-          analysisResult = {
-            title: parsed.title || analysisResult.title,
-            authors: parsed.authors || analysisResult.authors,
-            year: parsed.year || analysisResult.year,
-            summary: parsed.summary || analysisResult.summary,
-            keywords: Array.isArray(parsed.keywords) ? parsed.keywords : analysisResult.keywords,
-            type: parsed.type === 'patent' ? 'patent' : 'paper'
-          };
+          if (text) {
+            const cleanJson = text.replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/\s*```$/, "");
+            const parsed = JSON.parse(cleanJson);
+            
+            analysisResult = {
+              title: parsed.title || analysisResult.title,
+              authors: parsed.authors || analysisResult.authors,
+              year: parsed.year || analysisResult.year,
+              summary: parsed.summary || analysisResult.summary,
+              keywords: Array.isArray(parsed.keywords) && parsed.keywords.length > 0 ? parsed.keywords : analysisResult.keywords,
+              type: parsed.type === 'patent' ? 'patent' : 'paper'
+            };
+          }
         } catch (aiErr) {
           console.error("AI parse error for file:", file.originalname, aiErr);
+          // Fallback to filename-based analysis if AI fails
         }
       }
 
@@ -87,10 +97,10 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
       });
     }
 
-    res.json({ documents: results });
+    return res.json({ documents: results });
   } catch (error: any) {
     console.error("File upload and analysis error:", error);
-    res.status(500).json({ error: error.message || "파일 업로드 및 분석 중 오류가 발생했습니다." });
+    return res.status(500).json({ error: error.message || "파일 업로드 및 분석 중 오류가 발생했습니다." });
   }
 });
 

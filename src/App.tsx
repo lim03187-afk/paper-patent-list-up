@@ -59,7 +59,7 @@ export default function App() {
   }, [folder]);
 
   // Extract available years sorted descending
-  const availableYears = Array.from(new Set(documents.map(d => d.year))).sort((a, b) => b.localeCompare(a));
+  const availableYears = Array.from(new Set(documents.map(d => String(d.year)))).sort((a: string, b: string) => b.localeCompare(a));
 
   // Counts
   const totalCount = documents.length;
