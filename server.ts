@@ -7,13 +7,51 @@ import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
 const pdfParseLib = require("pdf-parse");
-const pdfParse = typeof pdfParseLib === 'function' ? pdfParseLib : (pdfParseLib.default || pdfParseLib);
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: '50mb' }));
-const upload = multer({ storage: multer.memoryStorage() });
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok" });
+});
+
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 }
+});
+
+async function extractTextFromFile(file: Express.Multer.File): Promise<string> {
+  const isPdf = file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf");
+  if (isPdf) {
+    try {
+      if (pdfParseLib && pdfParseLib.PDFParse) {
+        const parser = new pdfParseLib.PDFParse({ data: file.buffer });
+        const result = await parser.getText();
+        if (result && typeof result.text === 'string' && result.text.trim()) {
+          return result.text;
+        }
+      }
+      if (typeof pdfParseLib === 'function') {
+        const result = await pdfParseLib(file.buffer);
+        if (result && typeof result.text === 'string' && result.text.trim()) {
+          return result.text;
+        }
+      }
+    } catch (err) {
+      console.log("PDF parser note:", err);
+    }
+  }
+
+  // Text/Markdown or raw fallback
+  try {
+    return file.buffer.toString("utf-8");
+  } catch {
+    return "";
+  }
+}
 
 // API endpoint to analyze uploaded computer files (PDF, TXT, MD, etc.) using Gemini AI
 app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
@@ -30,28 +68,21 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
       const cleanName = file.originalname.replace(/\.[^/.]+$/, "");
       const isPatent = cleanName.toLowerCase().includes("patent") || cleanName.toLowerCase().includes("특허") || cleanName.toLowerCase().includes("출원");
       
-      let extractedText = "";
-      try {
-        if (file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf")) {
-          if (typeof pdfParse === 'function') {
-            const pdfData = await pdfParse(file.buffer);
-            extractedText = pdfData.text || "";
-          } else {
-            extractedText = file.buffer.toString("utf-8");
-          }
-        } else if (file.mimetype.startsWith("text/") || file.originalname.toLowerCase().endsWith(".txt") || file.originalname.toLowerCase().endsWith(".md")) {
-          extractedText = file.buffer.toString("utf-8");
-        }
-      } catch (parseErr) {
-        console.log("Local text/pdf extract note:", parseErr);
-      }
+      const extractedText = await extractTextFromFile(file);
+
+      // Smart rule extraction fallback based on:
+      // Line 1: Title, Line 2: Author, Paragraph 1: Summary
+      const lines = extractedText.split('\n').map(l => l.trim()).filter(Boolean);
+      const fallbackTitle = lines[0]?.slice(0, 120) || cleanName;
+      const fallbackAuthors = lines[1]?.slice(0, 80) || "연구자";
+      const fallbackSummary = lines.slice(2, 6).join(' ').slice(0, 300) || `${file.originalname} 파일이 성공적으로 등록되었습니다.`;
 
       let analysisResult = {
-        title: cleanName,
-        authors: "로컬 연구자",
+        title: fallbackTitle,
+        authors: fallbackAuthors,
         year: new Date().getFullYear().toString(),
-        summary: extractedText.trim() ? extractedText.slice(0, 300) + "..." : `${file.originalname} 파일이 성공적으로 업로드 및 아카이브되었습니다.`,
-        keywords: [isPatent ? "특허" : "학술논문", "로컬문서", "연구자료"],
+        summary: fallbackSummary,
+        keywords: [isPatent ? "특허" : "학술논문", "연구자료", "문헌분석"],
         type: isPatent ? "patent" : "paper" as const
       };
 
@@ -79,7 +110,7 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
 ${extractedText.slice(0, 4000)}`;
 
           const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error("AI analysis timeout")), 15000)
+            setTimeout(() => reject(new Error("AI analysis timeout")), 12000)
           );
 
           const response = await Promise.race([
