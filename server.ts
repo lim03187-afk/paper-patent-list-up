@@ -3,6 +3,10 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import multer from "multer";
+import { createRequire } from "module";
+
+const require = createRequire(import.meta.url);
+const pdfParse = require("pdf-parse");
 
 const app = express();
 const PORT = 3000;
@@ -34,25 +38,18 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
         type: isPatent ? "patent" : "paper" as const
       };
 
-      if (apiKey) {
-        try {
-          const ai = new GoogleGenAI({ apiKey });
-          
-          let filePart: any = null;
-          if (file.mimetype === "application/pdf" || file.mimetype.startsWith("text/") || file.mimetype.includes("document") || file.buffer) {
-            try {
-              filePart = {
-                inlineData: {
-                  mimeType: file.mimetype === "application/pdf" ? "application/pdf" : (file.mimetype.startsWith("text/") ? "text/plain" : "application/pdf"),
-                  data: file.buffer.toString("base64")
-                }
-              };
-            } catch (bufErr) {
-              console.error("Buffer conversion error:", bufErr);
-            }
-          }
+      try {
+        let extractedText = "";
+        if (file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf")) {
+          const pdfData = await pdfParse(file.buffer);
+          extractedText = pdfData.text || "";
+        } else if (file.mimetype.startsWith("text/") || file.originalname.endsWith(".txt") || file.originalname.endsWith(".md")) {
+          extractedText = file.buffer.toString("utf-8");
+        }
 
-          const prompt = `다음 첨부된 파일(${file.originalname})의 내용을 분석하여 JSON 형식으로 정확히 추출해주세요.
+        if (apiKey && extractedText.trim()) {
+          const ai = new GoogleGenAI({ apiKey });
+          const prompt = `다음 첨부된 문서 내용(${file.originalname})을 분석하여 JSON 형식으로 정확히 추출해주세요.
 반드시 아래 JSON 포맷으로만 응답하세요 (마크다운 백틱 없이 순수 JSON 객체만):
 {
   "title": "문서의 실제 논문 또는 특허 제목",
@@ -61,13 +58,14 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
   "summary": "핵심 내용 요약 (3~4문장 내외, 한국어)",
   "keywords": ["키워드1", "키워드2", "키워드3"],
   "type": "paper 또는 patent"
-}`;
+}
 
-          const contents = filePart ? [filePart, { text: prompt }] : [prompt];
+문서 내용 발췌 (최대 10000자):
+${extractedText.slice(0, 10000)}`;
 
           const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
-            contents: contents,
+            contents: prompt,
           });
 
           const text = response.text ? response.text.trim() : "";
@@ -84,10 +82,9 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
               type: parsed.type === 'patent' ? 'patent' : 'paper'
             };
           }
-        } catch (aiErr) {
-          console.error("AI parse error for file:", file.originalname, aiErr);
-          // Fallback to filename-based analysis if AI fails
         }
+      } catch (err) {
+        console.error("PDF/AI processing error for file:", file.originalname, err);
       }
 
       results.push({
