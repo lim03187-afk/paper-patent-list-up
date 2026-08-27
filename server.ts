@@ -6,7 +6,7 @@ import multer from "multer";
 import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
-const pdfParseLib = require("pdf-parse");
+const pdfParseLib = require("pdf-parse/lib/pdf-parse.js");
 
 const app = express();
 const PORT = 3000;
@@ -25,32 +25,29 @@ const upload = multer({
 
 async function extractTextFromFile(file: Express.Multer.File): Promise<string> {
   const isPdf = file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf");
-  if (isPdf) {
+  if (isPdf && file.buffer && file.buffer.length > 0) {
     try {
-      if (pdfParseLib && pdfParseLib.PDFParse) {
-        const parser = new pdfParseLib.PDFParse({ data: file.buffer });
-        const result = await parser.getText();
-        if (result && typeof result.text === 'string' && result.text.trim()) {
-          return result.text;
-        }
-      }
       if (typeof pdfParseLib === 'function') {
         const result = await pdfParseLib(file.buffer);
         if (result && typeof result.text === 'string' && result.text.trim()) {
-          return result.text;
+          return result.text.trim();
         }
       }
     } catch (err) {
       console.log("PDF parser note:", err);
     }
-  }
-
-  // Text/Markdown or raw fallback
-  try {
-    return file.buffer.toString("utf-8");
-  } catch {
+    // For PDFs, never fallback to buffer.toString("utf-8") as it dumps binary header %PDF-1.6
     return "";
   }
+
+  // Text/Markdown files
+  try {
+    const raw = file.buffer.toString("utf-8");
+    if (!raw.startsWith("%PDF")) {
+      return raw;
+    }
+  } catch {}
+  return "";
 }
 
 interface DoiMetadata {
@@ -185,17 +182,39 @@ async function searchCrossrefByTitle(candidateTitle: string): Promise<DoiMetadat
 function cleanMetadata(
   titleCandidate?: string,
   authorsCandidate?: any,
-  yearCandidate?: any
+  yearCandidate?: any,
+  fallbackFilename?: string
 ) {
   let cleanTitle = (titleCandidate || "").trim();
   // Strip leading page numbers if any (e.g. "209\nTitle" -> "Title")
   cleanTitle = cleanTitle.replace(/^\d+\s+/, "").replace(/\s+/g, " ");
 
+  // Detect corrupted title (e.g. %PDF-1.6 or binary symbols)
+  if (
+    !cleanTitle ||
+    cleanTitle.startsWith("%PDF") ||
+    cleanTitle.startsWith("%") ||
+    cleanTitle.includes("\uFFFD") ||
+    cleanTitle === "제목 없음"
+  ) {
+    if (fallbackFilename) {
+      cleanTitle = fallbackFilename.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ").trim();
+    } else {
+      cleanTitle = "학술 연구 문서";
+    }
+  }
+
   let cleanAuthors = "저자 미상";
   if (Array.isArray(authorsCandidate)) {
-    cleanAuthors = authorsCandidate.map(a => String(a).trim()).filter(Boolean).join(", ");
+    const list = authorsCandidate
+      .map(a => String(a).trim())
+      .filter(a => a && !a.startsWith("%") && !a.includes("\uFFFD"));
+    if (list.length > 0) cleanAuthors = list.join(", ");
   } else if (typeof authorsCandidate === "string" && authorsCandidate.trim()) {
-    cleanAuthors = authorsCandidate.trim();
+    const trimmed = authorsCandidate.trim();
+    if (!trimmed.startsWith("%") && !trimmed.includes("\uFFFD") && trimmed !== "저자 미상") {
+      cleanAuthors = trimmed;
+    }
   }
 
   let cleanYear = new Date().getFullYear().toString();
@@ -224,7 +243,7 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
 
     for (const file of files) {
       const isPdf = file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf");
-      const cleanName = file.originalname.replace(/\.[^/.]+$/, "");
+      const cleanName = file.originalname.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ");
       const isPatent = cleanName.toLowerCase().includes("patent") || cleanName.toLowerCase().includes("특허") || cleanName.toLowerCase().includes("출원");
       
       const extractedText = await extractTextFromFile(file);
@@ -233,14 +252,14 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
       const rawLines = extractedText
         .split('\n')
         .map(l => l.trim())
-        .filter(l => l && !l.match(/^\d+$/) && !l.toLowerCase().includes("downloaded from"));
+        .filter(l => l && !l.match(/^\d+$/) && !l.toLowerCase().includes("downloaded from") && !l.startsWith("%PDF") && !l.startsWith("%"));
       
       const firstLineTitle = rawLines[0]?.slice(0, 150) || cleanName;
-      const secondLineAuthors = rawLines[1]?.slice(0, 100) || "연구자";
-      const firstParagraphSummary = rawLines.slice(2, 7).join(' ').slice(0, 350) || `${file.originalname} 파일이 성공적으로 등록되었습니다.`;
+      const secondLineAuthors = rawLines[1]?.slice(0, 100) || "저자 미상";
+      const firstParagraphSummary = rawLines.slice(2, 7).join(' ').slice(0, 350) || `${file.originalname} 파일이 등록되었습니다.`;
 
-      // Extract year from text if present
-      const yearMatch = extractedText.match(/\b(19\d\d|20\d\d)\b/);
+      // Extract year from text or filename if present
+      const yearMatch = (file.originalname + " " + extractedText).match(/\b(19\d\d|20\d\d)\b/);
       const textYear = yearMatch ? yearMatch[1] : new Date().getFullYear().toString();
 
       // 1. Check for DOI in the extracted document text
@@ -251,16 +270,28 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
         doiMeta = await fetchMetadataByDoi(extractedDoi);
       }
       
-      // If no direct DOI found yet, attempt title search via Crossref for scholarly papers
-      if (!doiMeta && !isPatent && firstLineTitle && firstLineTitle.length > 6) {
-        doiMeta = await searchCrossrefByTitle(firstLineTitle);
+      // If no direct DOI found yet, attempt title/filename search via Crossref for scholarly papers
+      if (!doiMeta && !isPatent) {
+        if (firstLineTitle && firstLineTitle.length > 5 && !firstLineTitle.startsWith("%")) {
+          doiMeta = await searchCrossrefByTitle(firstLineTitle);
+        }
+        if (!doiMeta && cleanName && cleanName.length > 2) {
+          doiMeta = await searchCrossrefByTitle(cleanName);
+        }
       }
 
+      const initialClean = cleanMetadata(
+        doiMeta?.title || firstLineTitle,
+        doiMeta?.authors || secondLineAuthors,
+        doiMeta?.year || textYear,
+        file.originalname
+      );
+
       let analysisResult = {
-        title: doiMeta?.title || firstLineTitle,
-        authors: doiMeta?.authors || secondLineAuthors,
-        year: doiMeta?.year || textYear,
-        summary: firstParagraphSummary,
+        title: initialClean.cleanTitle,
+        authors: initialClean.cleanAuthors,
+        year: initialClean.cleanYear,
+        summary: `[제목: ${initialClean.cleanTitle} | 저자: ${initialClean.cleanAuthors} | 발행: ${initialClean.cleanYear}년] ${firstParagraphSummary}`,
         keywords: [isPatent ? "특허" : "학술논문", "연구자료", "문헌분석"],
         type: isPatent ? "patent" : "paper" as const,
         doi: doiMeta?.doi || extractedDoi || undefined,
@@ -272,13 +303,14 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
         try {
           const ai = new GoogleGenAI({ apiKey });
           const promptInstructions = `당신은 전 세계 학술 논문 및 특허 문헌 분석 최고 전문가입니다.
-주어진 파일(${file.originalname})의 내용을 정밀 분석하여 학술 서지 정보(Title, Writer/Authors, Published Year)와 요약을 반드시 아래 JSON 형식으로 추출하세요.
+주어진 파일(파일명: ${file.originalname})의 내용을 정밀 분석하여 학술 서지 정보(정확한 논문 Title, 전체 저자명 Writer/Authors, 출판 연도 Published Year)와 상세 요약을 반드시 아래 JSON 형식으로 추출하세요.
+파일명이나 본문에 축약어(예: lok1985 -> Canadian Journal of Chemistry 1985년 논문 'Particle size control in dispersion polymerization of polystyrene')가 있다면 실제 논문 정보로 정확하게 분석해 주세요.
 
 [필수 추출 규칙]
-1. title: 문서의 공식 논문 제목 또는 특허 명칭. (상단 머리말, 페이지 번호, 다운로드 문구 등은 제외하고 실제 연구 제목만 추출)
+1. title: 문서의 공식 논문 제목 또는 특허 명칭. (상단 머리말, %PDF 문구, 페이지 번호 등은 제외하고 실제 연구 제목만 추출)
 2. authors: 저자 전체 성명 목록 (쉼표로 구분, 예: "Kar P. Lok, Christopher K. Ober")
 3. year: 출판 또는 발행 연도 4자리 숫자 (예: "1985")
-4. summary: **[제목: {title} | 저자: {authors} | 발행: {year}년]** 서지 표기를 요약 첫 줄에 포함하고, 연구의 목적, 핵심 분석 내용, 도출된 결론을 2~4문장으로 명확하게 한국어로 작성
+4. summary: **[제목: {title} | 저자: {authors} | 발행연도: {year}년]** 서지 표기를 요약 첫 줄에 포함하고, 연구의 목적, 핵심 분석 내용, 도출된 결론을 2~4문장으로 명확하게 한국어로 작성
 5. keywords: 문서의 핵심 기술 키워드 3~5개 배열
 6. type: "${isPatent ? 'patent' : 'paper'}"
 7. doi: 본문에 기재된 DOI (예: 10.xxxx/...)가 있다면 추출 (없으면 null)
@@ -289,42 +321,25 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
   "title": "정확한 논문/특허 제목",
   "authors": "저자1, 저자2",
   "year": "1985",
-  "summary": "핵심 내용 요약 (한국어)",
+  "summary": "[제목: ... | 저자: ... | 발행연도: 1985년] 핵심 요약 내용",
   "keywords": ["키워드1", "키워드2"],
   "type": "paper",
   "doi": null,
   "journal": "학술지명"
 }`;
 
-          let contents: any[] = [];
-          if (isPdf && file.buffer && file.buffer.length > 0) {
-            // Provide base64 PDF directly for vision/layout extraction
-            contents = [
-              {
-                inlineData: {
-                  mimeType: "application/pdf",
-                  data: file.buffer.toString("base64")
-                }
-              },
-              { text: promptInstructions }
-            ];
-          } else {
-            contents = [
-              { text: promptInstructions + "\n\n문서 내용:\n" + (extractedText.slice(0, 5000) || cleanName) }
-            ];
-          }
+          const contentText = promptInstructions + "\n\n[파일 정보]\n- 파일명: " + file.originalname + "\n- 추출 텍스트:\n" + (extractedText.slice(0, 8000) || cleanName);
 
           let response: any = null;
           try {
             response = await ai.models.generateContent({
-              model: "gemini-3.5-flash-lite",
-              contents: contents,
+              model: "gemini-3.1-flash-lite",
+              contents: contentText,
             });
-          } catch (modelErr) {
-            console.log("gemini-3.5-flash-lite retry with gemini-3.6-flash");
+          } catch {
             response = await ai.models.generateContent({
-              model: "gemini-3.6-flash",
-              contents: contents,
+              model: "gemini-3.5-flash-lite",
+              contents: contentText,
             });
           }
 
@@ -341,8 +356,8 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
               }
             }
 
-            // Also if we didn't have DOI metadata, try looking up Crossref with the newly refined AI title
-            if (!doiMeta && !isPatent && parsed.title && parsed.title.length > 6) {
+            // If Crossref lookup needed with refined title
+            if (!doiMeta && !isPatent && parsed.title && parsed.title.length > 5 && !parsed.title.startsWith("%")) {
               const searchedDoi = await searchCrossrefByTitle(parsed.title);
               if (searchedDoi) {
                 doiMeta = searchedDoi;
@@ -352,13 +367,13 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
             const { cleanTitle, cleanAuthors, cleanYear } = cleanMetadata(
               doiMeta?.title || parsed.title || analysisResult.title,
               doiMeta?.authors || parsed.authors || analysisResult.authors,
-              doiMeta?.year || parsed.year || analysisResult.year
+              doiMeta?.year || parsed.year || analysisResult.year,
+              file.originalname
             );
 
-            // Construct rich summary guaranteeing title, writer, and published year are highlighted
             let finalSummary = parsed.summary || analysisResult.summary;
-            if (!finalSummary.includes(cleanAuthors) && cleanAuthors !== "저자 미상") {
-              finalSummary = `[저자: ${cleanAuthors} (${cleanYear})] ${finalSummary}`;
+            if (!finalSummary.startsWith("[제목:")) {
+              finalSummary = `[제목: ${cleanTitle} | 저자: ${cleanAuthors} | 발행연도: ${cleanYear}년] ${finalSummary}`;
             }
 
             analysisResult = {
@@ -381,7 +396,8 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
       const { cleanTitle, cleanAuthors, cleanYear } = cleanMetadata(
         analysisResult.title,
         analysisResult.authors,
-        analysisResult.year
+        analysisResult.year,
+        file.originalname
       );
 
       results.push({
@@ -537,47 +553,70 @@ ${rawText.slice(0, 5000)}`;
   }
 });
 
-// API endpoint to re-analyze existing documents (e.g. ones with placeholder names like lok1985)
+// API endpoint to re-analyze existing documents (e.g. ones with placeholder names like lok1985 or %PDF)
 app.post("/api/reanalyze-document", async (req, res) => {
   try {
     const { id, title, authors, year, summary, type, folderPath } = req.body;
-    const cleanSearchQuery = (title || "").replace(/\.(pdf|txt|md|docx?)$/i, "").trim();
+    
+    // Detect if title is corrupted (e.g. %PDF-1.6, %??, etc.)
+    let candidateQuery = (title || "").replace(/\.(pdf|txt|md|docx?)$/i, "").trim();
+    
+    // Look for original filename inside summary (e.g. "lok1985.pdf 파일에서 추출된...")
+    const filenameInSummary = (summary || "").match(/([a-zA-Z0-9_.-]+)\.(pdf|txt|md|docx?)/i);
+    const originalFilename = filenameInSummary ? filenameInSummary[0] : "";
+    const cleanFilename = filenameInSummary ? filenameInSummary[1].replace(/[-_]/g, " ") : "";
+
+    if (
+      !candidateQuery ||
+      candidateQuery.startsWith("%PDF") ||
+      candidateQuery.startsWith("%") ||
+      candidateQuery.includes("\uFFFD") ||
+      candidateQuery.includes("") ||
+      /^[^a-zA-Z0-9가-힣]+$/.test(candidateQuery)
+    ) {
+      candidateQuery = cleanFilename || "학술 논문";
+    }
 
     let doiMeta: DoiMetadata | null = null;
 
-    // Check if title has DOI pattern or search Crossref
-    const extractedDoi = extractDoiFromText(title + " " + (summary || ""));
+    // Check if title or summary has DOI pattern or search Crossref
+    const extractedDoi = extractDoiFromText((title || "") + " " + (summary || ""));
     if (extractedDoi) {
       doiMeta = await fetchMetadataByDoi(extractedDoi);
     }
-    if (!doiMeta && cleanSearchQuery.length > 2) {
-      doiMeta = await searchCrossrefByTitle(cleanSearchQuery);
+    if (!doiMeta && candidateQuery && candidateQuery.length >= 3 && !candidateQuery.startsWith("%")) {
+      doiMeta = await searchCrossrefByTitle(candidateQuery);
+    }
+    if (!doiMeta && cleanFilename && cleanFilename.length >= 3) {
+      doiMeta = await searchCrossrefByTitle(cleanFilename);
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (apiKey) {
       const ai = new GoogleGenAI({ apiKey });
       const prompt = `당신은 전 세계 학술 논문 및 특허 문헌 분석 최고 전문가입니다.
-기존 아카이브에 등록된 문서의 정보가 불완전하거나 파일명(예: "${cleanSearchQuery}")만 있는 상태입니다.
-해당 문서의 실제 정식 서지 정보(Title, Writer/Authors, Published Year)와 상세 요약을 정확히 분석하여 JSON으로 반환해주세요.
+기존 아카이브에 등록된 문서의 정보가 불완전하거나 파일명(예: "${candidateQuery}", "${originalFilename}") 또는 깨진 텍스트로 저장된 상태입니다.
+해당 문서의 실제 정식 서지 정보(공식 Title, 저자 전체 성명 Writer/Authors, 출판 연도 Published Year)와 한국어 상세 요약을 반드시 아래 JSON 형식으로 추출하여 반환하세요.
+(예: lok1985 -> Canadian Journal of Chemistry 1985년 논문 'Particle size control in dispersion polymerization of polystyrene', 저자: Kar P. Lok, Christopher K. Ober)
 
 [입력 정보]
-- 제목/파일명: ${title}
-- 저자: ${authors || "미상"}
-- 연도: ${year || "미상"}
+- 식별된 제목/검색어: ${candidateQuery}
+- 원본 파일명: ${originalFilename || "없음"}
+- 기존 저자: ${authors || "미상"}
+- 기존 연도: ${year || "미상"}
 - 기존 요약: ${summary || ""}
 - 유형: ${type || "paper"}
-${doiMeta ? `- Crossref 검색 결과: 제목: ${doiMeta.title}, 저자: ${doiMeta.authors}, 연도: ${doiMeta.year}, 저널: ${doiMeta.containerTitle || ""}` : ""}
+${doiMeta ? `- Crossref 공식 학술 DB 검색 결과:\n  * 제목: ${doiMeta.title}\n  * 저자: ${doiMeta.authors}\n  * 연도: ${doiMeta.year}\n  * 저널: ${doiMeta.containerTitle || ""}\n  * DOI: ${doiMeta.doi || ""}` : ""}
 
 [필수 추출 규칙]
-1. title: 공식 학술 논문 제목 또는 특허 정식 명칭 (예: "Particle size control in dispersion polymerization of polystyrene")
-2. authors: 저자 전체 성명 (쉼표 구분, 예: "Kar P. Lok, Christopher K. Ober")
-3. year: 출판/발행 연도 4자리 (예: "1985")
-4. summary: **[제목: {title} | 저자: {authors} | 발행연도: {year}년]** 서지 표기를 최상단에 포함하고, 연구의 목적, 주요 방법론, 핵심 결론을 2~4문장으로 명확하게 한국어로 작성
+1. title: 공식 학술 논문 제목 또는 특허 명칭 (절대 '%PDF'나 파일명 확장자 등을 포함하지 말 것)
+2. authors: 저자 전체 성명 목록 (쉼표 구분, 예: "Kar P. Lok, Christopher K. Ober")
+3. year: 출판 또는 발행 연도 4자리 (예: "1985")
+4. summary: **[제목: {title} | 저자: {authors} | 발행연도: {year}년]** 서지 정보를 최상단에 반드시 포함하고, 연구의 목적, 주요 방법론, 핵심 결론을 2~4문장의 명확한 한국어로 작성
 5. keywords: 기술 키워드 3~5개 배열
 6. type: "${type || 'paper'}"
-7. doi: DOI가 있다면 기재 (예: 10.1139/v85-033)
-8. journal: 학술지명 또는 출판기관 (예: "Canadian Journal of Chemistry")
+7. doi: DOI가 있다면 기재 (예: "10.1139/v85-033" 등, 없으면 null)
+8. journal: 학술지명 또는 출판기관 (예: "Canadian Journal of Chemistry" 등)
 
 반드시 마크다운 백틱 없이 순수 JSON 객체만 응답하세요:
 {
@@ -594,12 +633,12 @@ ${doiMeta ? `- Crossref 검색 결과: 제목: ${doiMeta.title}, 저자: ${doiMe
       let response: any = null;
       try {
         response = await ai.models.generateContent({
-          model: "gemini-3.5-flash-lite",
+          model: "gemini-3.1-flash-lite",
           contents: prompt,
         });
       } catch {
         response = await ai.models.generateContent({
-          model: "gemini-3.6-flash",
+          model: "gemini-3.5-flash-lite",
           contents: prompt,
         });
       }
@@ -610,14 +649,15 @@ ${doiMeta ? `- Crossref 검색 결과: 제목: ${doiMeta.title}, 저자: ${doiMe
         const parsed = JSON.parse(cleanJson);
 
         const { cleanTitle, cleanAuthors, cleanYear } = cleanMetadata(
-          doiMeta?.title || parsed.title || title,
-          doiMeta?.authors || parsed.authors || authors,
-          doiMeta?.year || parsed.year || year
+          parsed.title || doiMeta?.title,
+          parsed.authors || doiMeta?.authors,
+          parsed.year || doiMeta?.year,
+          originalFilename || candidateQuery
         );
 
         let finalSummary = parsed.summary || summary || "내용 요약";
-        if (!finalSummary.includes(cleanAuthors) && cleanAuthors !== "저자 미상") {
-          finalSummary = `[저자: ${cleanAuthors} (${cleanYear})] ${finalSummary}`;
+        if (!finalSummary.startsWith("[제목:")) {
+          finalSummary = `[제목: ${cleanTitle} | 저자: ${cleanAuthors} | 발행연도: ${cleanYear}년] ${finalSummary}`;
         }
 
         return res.json({
@@ -626,27 +666,34 @@ ${doiMeta ? `- Crossref 검색 결과: 제목: ${doiMeta.title}, 저자: ${doiMe
           authors: cleanAuthors,
           year: cleanYear,
           summary: finalSummary,
-          keywords: Array.isArray(parsed.keywords) && parsed.keywords.length > 0 ? parsed.keywords : ["학술연구"],
+          keywords: Array.isArray(parsed.keywords) && parsed.keywords.length > 0 ? parsed.keywords : ["학술연구", "문헌분석"],
           type: parsed.type === "patent" ? "patent" : "paper",
           doi: doiMeta?.doi || parsed.doi || undefined,
-          fileUrl: doiMeta?.url || `https://doi.org/${doiMeta?.doi || parsed.doi || ""}`,
+          fileUrl: doiMeta?.url || (doiMeta?.doi ? `https://doi.org/${doiMeta.doi}` : undefined) || (parsed.doi ? `https://doi.org/${parsed.doi}` : undefined),
           journal: doiMeta?.containerTitle || parsed.journal || undefined,
           folderPath: folderPath
         });
       }
     }
 
-    // Fallback if no Gemini key
+    // Fallback if no Gemini key or parse error
+    const { cleanTitle, cleanAuthors, cleanYear } = cleanMetadata(
+      doiMeta?.title,
+      doiMeta?.authors,
+      doiMeta?.year,
+      originalFilename || candidateQuery
+    );
+
     return res.json({
       id,
-      title: doiMeta?.title || title,
-      authors: doiMeta?.authors || authors,
-      year: doiMeta?.year || year,
-      summary: `[제목: ${doiMeta?.title || title} | 저자: ${doiMeta?.authors || authors} | 발행연도: ${doiMeta?.year || year}년] ` + (summary || "문서 분석 완료"),
+      title: cleanTitle,
+      authors: cleanAuthors,
+      year: cleanYear,
+      summary: `[제목: ${cleanTitle} | 저자: ${cleanAuthors} | 발행연도: ${cleanYear}년] ` + (summary || "문서 분석 완료"),
       keywords: ["연구자료"],
       type: type || "paper",
       doi: doiMeta?.doi,
-      fileUrl: doiMeta?.url || undefined,
+      fileUrl: doiMeta?.url,
       journal: doiMeta?.containerTitle,
       folderPath
     });

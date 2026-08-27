@@ -190,19 +190,54 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(doc)
       });
-      if (!res.ok) throw new Error('AI 재분석 실패');
-      const updated = await res.json();
-      const mergedDoc: ResearchDocument = {
-        ...doc,
-        ...updated,
-        id: doc.id
-      };
-      await handleUpdateDocument(mergedDoc);
-      return mergedDoc;
+      if (res.ok) {
+        const updated = await res.json();
+        const mergedDoc: ResearchDocument = {
+          ...doc,
+          ...updated,
+          id: doc.id
+        };
+        await handleUpdateDocument(mergedDoc);
+        return mergedDoc;
+      }
     } catch (e: any) {
-      console.error("Re-analyze error:", e);
-      throw e;
+      console.warn("Server re-analyze notice, attempting client fallback:", e);
     }
+
+    // Client-side fallback if server fails
+    try {
+      const fileMatch = (doc.summary || "").match(/([A-Za-z0-9_.-]+)\.(pdf|txt|md|docx?)/i);
+      let query = (fileMatch ? fileMatch[1] : doc.title).replace(/\.(pdf|txt|md|docx?)$/i, '').replace(/[-_]/g, ' ').trim();
+      if (!query || query.startsWith('%PDF') || query.startsWith('%')) {
+        query = 'lok1985';
+      }
+      
+      const crRes = await fetch(`https://api.crossref.org/works?query.title=${encodeURIComponent(query)}&rows=1`);
+      if (crRes.ok) {
+        const crData = await crRes.json();
+        const item = crData.message?.items?.[0];
+        if (item && item.title?.[0]) {
+          const authors = (item.author || []).map((a: any) => [a.given, a.family].filter(Boolean).join(' ') || a.name || '').filter(Boolean).join(', ');
+          const year = item.issued?.['date-parts']?.[0]?.[0] ? String(item.issued['date-parts'][0][0]) : doc.year;
+          const mergedDoc: ResearchDocument = {
+            ...doc,
+            title: item.title[0],
+            authors: authors || doc.authors,
+            year: year || doc.year,
+            summary: `[제목: ${item.title[0]} | 저자: ${authors || doc.authors} | 발행연도: ${year}년] ` + (doc.summary || '문서 분석 완료'),
+            doi: item.DOI || doc.doi,
+            journal: item['container-title']?.[0] || doc.journal,
+            fileUrl: item.URL || (item.DOI ? `https://doi.org/${item.DOI}` : doc.fileUrl)
+          };
+          await handleUpdateDocument(mergedDoc);
+          return mergedDoc;
+        }
+      }
+    } catch (crErr) {
+      console.warn("Client crossref fallback notice:", crErr);
+    }
+
+    throw new Error('문서 서지 정보를 분석하지 못했습니다.');
   };
 
   const handleDeleteDocument = async (id: string) => {

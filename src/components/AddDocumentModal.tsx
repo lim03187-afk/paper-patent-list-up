@@ -42,13 +42,17 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
 
   // Client-side fallback text extractor
   const extractClientText = async (file: File): Promise<string> => {
+    const isPdf = file.name.toLowerCase().endsWith(".pdf") || file.type === "application/pdf";
+    if (isPdf) {
+      return file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ");
+    }
     try {
       const text = await file.text();
-      if (text && text.trim().length > 10) {
+      if (text && text.trim().length > 10 && !text.startsWith("%PDF")) {
         return text;
       }
     } catch {}
-    return file.name.replace(/\.[^/.]+$/, "");
+    return file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ");
   };
 
   // Client-side Crossref lookup
@@ -126,9 +130,16 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
           // Check Crossref directly from browser
           const crossrefMeta = await queryCrossrefClient(cleanName);
 
-          const lines = extractedText.split('\n').map(l => l.trim()).filter(Boolean);
-          const rawTitle = crossrefMeta?.title || (lines[0] && lines[0].length < 150 ? lines[0] : cleanName);
-          const rawAuthors = crossrefMeta?.authors || (lines[1] && lines[1].length < 80 ? lines[1] : '저자 미상');
+          const lines = extractedText.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('%PDF') && !l.startsWith('%'));
+          let rawTitle = crossrefMeta?.title || (lines[0] && lines[0].length < 150 ? lines[0] : cleanName.replace(/[-_]/g, ' '));
+          if (!rawTitle || rawTitle.startsWith('%PDF') || rawTitle.startsWith('%') || rawTitle.includes('\uFFFD')) {
+            rawTitle = cleanName.replace(/[-_]/g, ' ');
+          }
+
+          let rawAuthors = crossrefMeta?.authors || (lines[1] && lines[1].length < 80 ? lines[1] : '저자 미상');
+          if (rawAuthors.startsWith('%') || rawAuthors.includes('\uFFFD')) {
+            rawAuthors = '저자 미상';
+          }
           
           const yearMatch = (cleanName + ' ' + extractedText).match(/\b(19\d\d|20\d\d)\b/);
           const rawYear = crossrefMeta?.year || (yearMatch ? yearMatch[1] : new Date().getFullYear().toString());
