@@ -2,11 +2,97 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
+import multer from "multer";
 
 const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+const upload = multer({ storage: multer.memoryStorage() });
+
+// API endpoint to analyze uploaded computer files (PDF, TXT, MD, etc.) using Gemini AI
+app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
+  try {
+    const files = req.files as Express.Multer.File[];
+    if (!files || files.length === 0) {
+      return res.status(400).json({ error: "No files uploaded" });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    const results = [];
+
+    for (const file of files) {
+      let analysisResult = {
+        title: file.originalname.replace(/\.[^/.]+$/, ""),
+        authors: "로컬 업로드 저자",
+        year: new Date().getFullYear().toString(),
+        summary: `${file.originalname} 파일이 성공적으로 업로드 및 아카이브되었습니다.`,
+        keywords: ["로컬문서", "연구자료"],
+        type: file.originalname.toLowerCase().includes("patent") || file.originalname.toLowerCase().includes("특허") ? "patent" : "paper"
+      };
+
+      if (apiKey) {
+        try {
+          const ai = new GoogleGenAI({ apiKey });
+          
+          let filePart: any = null;
+          if (file.mimetype === "application/pdf" || file.mimetype.startsWith("text/") || file.mimetype === "application/msword" || file.mimetype.includes("document")) {
+            filePart = {
+              inlineData: {
+                mimeType: file.mimetype === "text/plain" ? "text/plain" : (file.mimetype === "application/pdf" ? "application/pdf" : "text/plain"),
+                data: file.buffer.toString("base64")
+              }
+            };
+          }
+
+          const prompt = `다음 첨부된 파일(${file.originalname})의 내용을 분석하여 JSON 형식으로 정확히 추출해주세요.
+반드시 아래 JSON 포맷으로만 응답하세요 (마크다운 백틱 없이 순수 JSON 객체만):
+{
+  "title": "문서의 실제 논문 또는 특허 제목",
+  "authors": "저자 이름들 (쉼표로 구분, 예: 홍길동, 김철수)",
+  "year": "발행 연도 (예: 2026)",
+  "summary": "핵심 내용 요약 (3~4문장 내외, 한국어)",
+  "keywords": ["키워드1", "키워드2", "키워드3"],
+  "type": "paper 또는 patent"
+}`;
+
+          const contents = filePart ? [filePart, { text: prompt }] : [prompt];
+
+          const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: contents,
+          });
+
+          const text = response.text ? response.text.trim() : "";
+          const cleanJson = text.replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/\s*```$/, "");
+          const parsed = JSON.parse(cleanJson);
+          
+          analysisResult = {
+            title: parsed.title || analysisResult.title,
+            authors: parsed.authors || analysisResult.authors,
+            year: parsed.year || analysisResult.year,
+            summary: parsed.summary || analysisResult.summary,
+            keywords: Array.isArray(parsed.keywords) ? parsed.keywords : analysisResult.keywords,
+            type: parsed.type === 'patent' ? 'patent' : 'paper'
+          };
+        } catch (aiErr) {
+          console.error("AI parse error for file:", file.originalname, aiErr);
+        }
+      }
+
+      results.push({
+        ...analysisResult,
+        originalFilename: file.originalname,
+        size: file.size
+      });
+    }
+
+    res.json({ documents: results });
+  } catch (error: any) {
+    console.error("File upload and analysis error:", error);
+    res.status(500).json({ error: error.message || "파일 업로드 및 분석 중 오류가 발생했습니다." });
+  }
+});
 
 // API endpoint to analyze paper/patent text using Gemini AI
 app.post("/api/analyze-document", async (req, res) => {

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Sparkles, FileText, Shield, Loader2, Link as LinkIcon, PlusCircle } from 'lucide-react';
+import { X, Sparkles, FileText, Shield, Loader2, UploadCloud, PlusCircle, FolderUp } from 'lucide-react';
 import { ResearchDocument, DocType } from '../types';
 
 interface AddDocumentModalProps {
@@ -15,7 +15,13 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
   onAddDocument,
   currentFolderPath
 }) => {
-  const [activeTab, setActiveTab] = useState<'ai' | 'manual'>('ai');
+  const [activeTab, setActiveTab] = useState<'file' | 'ai' | 'manual'>('file');
+  
+  // File upload state
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+
+  // AI text analysis state
   const [rawText, setRawText] = useState('');
   const [aiDocType, setAiDocType] = useState<DocType>('paper');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -31,6 +37,59 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
   const [fileUrl, setFileUrl] = useState('');
 
   if (!isOpen) return null;
+
+  const handleFileUploadSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (selectedFiles.length === 0) return;
+
+    setIsUploading(true);
+    setErrorMsg('');
+
+    try {
+      const formData = new FormData();
+      selectedFiles.forEach(file => {
+        formData.append('files', file);
+      });
+
+      const res = await fetch('/api/upload-and-analyze', {
+        method: 'POST',
+        body: formData
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '파일 업로드 중 오류 발생');
+
+      if (data.documents && Array.isArray(data.documents)) {
+        data.documents.forEach((parsedDoc: any, idx: number) => {
+          const fileObj = selectedFiles[idx];
+          const localUrl = fileObj ? URL.createObjectURL(fileObj) : 'https://arxiv.org/';
+
+          const newDoc: ResearchDocument = {
+            id: 'doc-' + Date.now() + '-' + idx,
+            title: parsedDoc.title || fileObj?.name || '문서 제목',
+            authors: parsedDoc.authors || '저자 미상',
+            year: parsedDoc.year || '2026',
+            summary: parsedDoc.summary || '내용 요약 없음',
+            keywords: Array.isArray(parsedDoc.keywords) ? parsedDoc.keywords : ['연구자료'],
+            type: parsedDoc.type === 'patent' ? 'patent' : 'paper',
+            fileUrl: localUrl,
+            folderPath: currentFolderPath,
+            createdAt: new Date().toISOString().split('T')[0],
+            citationCount: 1
+          };
+
+          onAddDocument(newDoc);
+        });
+      }
+
+      onClose();
+      setSelectedFiles([]);
+    } catch (err: any) {
+      setErrorMsg(err.message || '파일 처리 중 오류가 발생했습니다.');
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   const handleAiAnalyze = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -93,7 +152,6 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
 
     onAddDocument(newDoc);
     onClose();
-    // Reset manual form
     setTitle('');
     setAuthors('');
     setSummary('');
@@ -108,12 +166,12 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/70">
           <div className="flex items-center space-x-2.5">
-            <div className="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center">
               <PlusCircle className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-slate-800">새 문서 등록 및 분석</h2>
-              <p className="text-xs text-slate-500">논문 또는 특허 문서를 추가합니다.</p>
+              <h2 className="text-sm font-semibold text-slate-800">컴퓨터 파일 업로드 및 연구 정리</h2>
+              <p className="text-xs text-slate-500">소장 중인 논문/특허 파일(PDF, TXT 등)을 업로드하여 AI 분석과 함께 정리하세요.</p>
             </div>
           </div>
           <button
@@ -127,21 +185,32 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
         {/* Tabs */}
         <div className="flex border-b border-slate-100 px-6 pt-3 bg-slate-50/40">
           <button
+            onClick={() => setActiveTab('file')}
+            className={`pb-3 px-3 text-xs font-semibold border-b-2 transition-colors flex items-center space-x-1.5 ${
+              activeTab === 'file'
+                ? 'border-blue-600 text-blue-700'
+                : 'border-transparent text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <FolderUp className="w-3.5 h-3.5 text-blue-600" />
+            <span>컴퓨터 파일 업로드</span>
+          </button>
+          <button
             onClick={() => setActiveTab('ai')}
-            className={`pb-3 px-4 text-xs font-semibold border-b-2 transition-colors flex items-center space-x-1.5 ${
+            className={`pb-3 px-3 text-xs font-semibold border-b-2 transition-colors flex items-center space-x-1.5 ${
               activeTab === 'ai'
-                ? 'border-indigo-600 text-indigo-700'
+                ? 'border-blue-600 text-blue-700'
                 : 'border-transparent text-slate-500 hover:text-slate-700'
             }`}
           >
             <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-            <span>AI 자동 분석 추가 (초록/텍스트 붙여넣기)</span>
+            <span>초록 텍스트 붙여넣기</span>
           </button>
           <button
             onClick={() => setActiveTab('manual')}
-            className={`pb-3 px-4 text-xs font-semibold border-b-2 transition-colors flex items-center space-x-1.5 ${
+            className={`pb-3 px-3 text-xs font-semibold border-b-2 transition-colors flex items-center space-x-1.5 ${
               activeTab === 'manual'
-                ? 'border-indigo-600 text-indigo-700'
+                ? 'border-blue-600 text-blue-700'
                 : 'border-transparent text-slate-500 hover:text-slate-700'
             }`}
           >
@@ -152,7 +221,90 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
 
         {/* Content area */}
         <div className="p-6 overflow-y-auto flex-1">
-          {activeTab === 'ai' ? (
+          {activeTab === 'file' ? (
+            <form onSubmit={handleFileUploadSubmit} className="space-y-4">
+              <div className="border-2 border-dashed border-slate-200 rounded-2xl p-6 text-center hover:border-blue-400 transition-colors bg-slate-50/50 relative group">
+                <input
+                  type="file"
+                  multiple
+                  accept=".pdf,.txt,.md,.doc,.docx"
+                  onChange={(e) => {
+                    if (e.target.files) {
+                      setSelectedFiles(Array.from(e.target.files));
+                    }
+                  }}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
+                <div className="flex flex-col items-center justify-center space-y-2 pointer-events-none">
+                  <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center group-hover:scale-105 transition-transform">
+                    <UploadCloud className="w-6 h-6" />
+                  </div>
+                  <div className="text-xs font-semibold text-slate-800">
+                    컴퓨터에서 논문·특허 파일 드래그 또는 클릭하여 선택
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    지원 형식: PDF, TXT, MD, DOC, DOCX (복수 선택 가능)
+                  </p>
+                </div>
+              </div>
+
+              {selectedFiles.length > 0 && (
+                <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 space-y-2">
+                  <span className="text-[11px] font-semibold text-slate-500">
+                    선택된 파일 ({selectedFiles.length}개):
+                  </span>
+                  <div className="max-h-32 overflow-y-auto space-y-1">
+                    {selectedFiles.map((f, i) => (
+                      <div key={i} className="flex items-center justify-between text-xs bg-white px-3 py-1.5 rounded-lg border border-slate-100">
+                        <span className="truncate font-medium text-slate-700">{f.name}</span>
+                        <span className="text-[10px] text-slate-400">{(f.size / 1024).toFixed(1)} KB</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {errorMsg && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700">
+                  {errorMsg}
+                </div>
+              )}
+
+              <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-3 text-xs text-blue-900 flex items-start space-x-2">
+                <Sparkles className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-semibold">AI 자동 정리:</span> 업로드하신 컴퓨터 파일을 Gemini AI가 즉시 분석하여 연도, 제목, 저자, 요약, 키워드를 추출하고, 클릭 시 로컬 파일을 바로 열 수 있도록 연결합니다.
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+                >
+                  취소
+                </button>
+                <button
+                  type="submit"
+                  disabled={selectedFiles.length === 0 || isUploading}
+                  className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors shadow-xs flex items-center space-x-2 disabled:opacity-50"
+                >
+                  {isUploading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>파일 업로드 및 AI 분석 중...</span>
+                    </>
+                  ) : (
+                    <>
+                      <UploadCloud className="w-4 h-4" />
+                      <span>파일 업로드 및 정리 시작</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          ) : activeTab === 'ai' ? (
             <form onSubmit={handleAiAnalyze} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -329,7 +481,7 @@ export const AddDocumentModal: React.FC<AddDocumentModalProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">파일 링크 (URL / DOI / 경로)</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">파일 링크 (URL / 경로)</label>
                   <input
                     type="text"
                     value={fileUrl}
