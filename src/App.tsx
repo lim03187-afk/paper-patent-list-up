@@ -13,7 +13,14 @@ import { LoginScreen } from './components/LoginScreen';
 import { ResearchDocument, FolderConfig, DocType } from './types';
 import { INITIAL_DOCUMENTS, DEFAULT_FOLDER } from './data/initialData';
 import { LayoutGrid, List, Loader2 } from 'lucide-react';
-import { getSupabaseClient } from './lib/supabase';
+import { 
+  getSupabaseClient, 
+  fetchDocumentsFromSupabase, 
+  saveDocumentToSupabase, 
+  deleteDocumentFromSupabase, 
+  fetchFolderFromSupabase, 
+  saveFolderToSupabase 
+} from './lib/supabase';
 
 export default function App() {
   const [user, setUser] = useState<any>(null);
@@ -70,6 +77,35 @@ export default function App() {
     checkSession();
   }, []);
 
+  // Sync documents and folder with Supabase when user is logged in
+  useEffect(() => {
+    if (user?.id) {
+      const syncWithSupabase = async () => {
+        try {
+          const remoteDocs = await fetchDocumentsFromSupabase(user.id);
+          if (remoteDocs && remoteDocs.length > 0) {
+            setDocuments(remoteDocs);
+          } else if (documents.length > 0) {
+            // Push local docs to remote if remote is empty
+            for (const doc of documents) {
+              await saveDocumentToSupabase(user.id, doc);
+            }
+          }
+
+          const remoteFolder = await fetchFolderFromSupabase(user.id);
+          if (remoteFolder) {
+            setFolder(remoteFolder);
+          } else {
+            await saveFolderToSupabase(user.id, folder);
+          }
+        } catch (e) {
+          console.error("Supabase sync error:", e);
+        }
+      };
+      syncWithSupabase();
+    }
+  }, [user?.id]);
+
   const handleLogout = async () => {
     try {
       const supabase = getSupabaseClient();
@@ -93,7 +129,7 @@ export default function App() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedDocForDetail, setSelectedDocForDetail] = useState<ResearchDocument | null>(null);
 
-  // Sync with localStorage
+  // Sync with localStorage as fallback cache
   useEffect(() => {
     localStorage.setItem('research_vault_docs', JSON.stringify(documents));
   }, [documents]);
@@ -130,12 +166,25 @@ export default function App() {
     return true;
   });
 
-  const handleAddDocument = (newDoc: ResearchDocument) => {
+  const handleAddDocument = async (newDoc: ResearchDocument) => {
     setDocuments(prev => [newDoc, ...prev]);
+    if (user?.id) {
+      await saveDocumentToSupabase(user.id, newDoc);
+    }
   };
 
-  const handleDeleteDocument = (id: string) => {
+  const handleDeleteDocument = async (id: string) => {
     setDocuments(prev => prev.filter(d => d.id !== id));
+    if (user?.id) {
+      await deleteDocumentFromSupabase(user.id, id);
+    }
+  };
+
+  const handleSaveFolder = async (newFolder: FolderConfig) => {
+    setFolder(newFolder);
+    if (user?.id) {
+      await saveFolderToSupabase(user.id, newFolder);
+    }
   };
 
   const handleResetData = () => {
@@ -327,7 +376,7 @@ export default function App() {
         isOpen={isFolderModalOpen}
         onClose={() => setIsFolderModalOpen(false)}
         currentFolder={folder}
-        onSaveFolder={(newFolder) => setFolder(newFolder)}
+        onSaveFolder={handleSaveFolder}
         onResetData={handleResetData}
         documentCount={documents.length}
       />
