@@ -38,18 +38,28 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
         type: isPatent ? "patent" : "paper" as const
       };
 
-      try {
-        let extractedText = "";
-        if (file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf")) {
-          const pdfData = await pdfParse(file.buffer);
-          extractedText = pdfData.text || "";
-        } else if (file.mimetype.startsWith("text/") || file.originalname.endsWith(".txt") || file.originalname.endsWith(".md")) {
-          extractedText = file.buffer.toString("utf-8");
-        }
-
-        if (apiKey && extractedText.trim()) {
+      if (apiKey) {
+        try {
           const ai = new GoogleGenAI({ apiKey });
-          const prompt = `다음 첨부된 문서 내용(${file.originalname})을 분석하여 JSON 형식으로 정확히 추출해주세요.
+          
+          let filePart: any = null;
+          let mimeType = "application/pdf";
+          if (file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf")) {
+            mimeType = "application/pdf";
+          } else if (file.mimetype.startsWith("text/") || file.originalname.toLowerCase().endsWith(".txt") || file.originalname.toLowerCase().endsWith(".md")) {
+            mimeType = "text/plain";
+          } else if (file.mimetype.includes("word") || file.originalname.toLowerCase().endsWith(".docx")) {
+            mimeType = "application/pdf"; // fallback or application/vnd.openxmlformats-officedocument.wordprocessingml.document
+          }
+
+          filePart = {
+            inlineData: {
+              mimeType: mimeType,
+              data: file.buffer.toString("base64")
+            }
+          };
+
+          const prompt = `다음 첨부된 파일(${file.originalname})의 내용을 분석하여 JSON 형식으로 정확히 추출해주세요.
 반드시 아래 JSON 포맷으로만 응답하세요 (마크다운 백틱 없이 순수 JSON 객체만):
 {
   "title": "문서의 실제 논문 또는 특허 제목",
@@ -58,15 +68,19 @@ app.post("/api/upload-and-analyze", upload.array("files"), async (req, res) => {
   "summary": "핵심 내용 요약 (3~4문장 내외, 한국어)",
   "keywords": ["키워드1", "키워드2", "키워드3"],
   "type": "paper 또는 patent"
-}
+}`;
 
-문서 내용 발췌 (최대 10000자):
-${extractedText.slice(0, 10000)}`;
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("AI analysis timeout")), 25000)
+          );
 
-          const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-          });
+          const response = await Promise.race([
+            ai.models.generateContent({
+              model: "gemini-2.5-flash",
+              contents: [filePart, { text: prompt }],
+            }),
+            timeoutPromise
+          ]) as any;
 
           const text = response.text ? response.text.trim() : "";
           if (text) {
@@ -82,9 +96,10 @@ ${extractedText.slice(0, 10000)}`;
               type: parsed.type === 'patent' ? 'patent' : 'paper'
             };
           }
+        } catch (aiErr) {
+          console.error("AI parse error for file:", file.originalname, aiErr);
+          // Fallback to filename/basic analysis without crashing
         }
-      } catch (err) {
-        console.error("PDF/AI processing error for file:", file.originalname, err);
       }
 
       results.push({
